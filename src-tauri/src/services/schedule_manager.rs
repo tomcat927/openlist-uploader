@@ -145,7 +145,20 @@ impl ScheduleManager {
                 log::info!("定时上传结束时间到：{}", schedule.end_time);
                 // 设置停止标志（等待当前任务完成）
                 self.queue_manager.set_stop_after_current(true);
-                self.send_schedule_notification_if_enabled(&schedule, "stop").await;
+
+                // 队列已全部完成时跳过"到点结束"通知（完成通知已由队列完成通知发出，避免重复打扰）
+                let has_remaining = {
+                    let queue = self.queue_manager.queue.read().await;
+                    queue.tasks.iter().any(|t| {
+                        t.status == crate::models::TaskStatus::Pending
+                            || t.status == crate::models::TaskStatus::Uploading
+                    })
+                };
+                if has_remaining {
+                    self.send_schedule_notification_if_enabled(&schedule, "stop").await;
+                } else {
+                    log::info!("定时上传结束时间到，但队列已全部完成，跳过到点结束通知");
+                }
             }
         }
     }
