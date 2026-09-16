@@ -40,9 +40,14 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
   const [manualDraft, setManualDraft] = useState('');
   const [manualError, setManualError] = useState('');
   const [manualVerifying, setManualVerifying] = useState(false);
+  const [showCreateInput, setShowCreateInput] = useState(false);
+  const [createDraft, setCreateDraft] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const manualInputRef = useRef<HTMLInputElement>(null);
+  const createInputRef = useRef<HTMLInputElement>(null);
 
   const isRoot = browsingPath === '/';
   const isValueRoot = normalizePath(value) === '/';
@@ -84,6 +89,9 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
       setShowManualInput(false);
       setManualDraft('');
       setManualError('');
+      setShowCreateInput(false);
+      setCreateDraft('');
+      setCreateError('');
       loadFolders(startPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -161,6 +169,49 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
       await invoke('write_client_log', { message: `手输路径验证失败: path=${normalized}, error=${message}` });
     } finally {
       setManualVerifying(false);
+    }
+  };
+
+  const handleToggleCreate = () => {
+    setShowCreateInput(!showCreateInput);
+    setCreateError('');
+    setCreateDraft('');
+    if (!showCreateInput) {
+      setTimeout(() => createInputRef.current?.focus(), 50);
+    }
+  };
+
+  const handleCreateFolder = async () => {
+    const name = createDraft.trim();
+    if (!name) {
+      setCreateError('请输入文件夹名称');
+      return;
+    }
+    if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+      setCreateError('文件夹名称不能包含 / \\ 等非法字符');
+      return;
+    }
+    setCreating(true);
+    setCreateError('');
+    try {
+      const config = await invoke<AppConfig>('get_config');
+      if (!config.alist.base_url) {
+        setCreateError('请先在设置中配置 Alist 服务地址');
+        return;
+      }
+      const newPath = browsingPath === '/' ? `/${name}` : `${browsingPath}/${name}`;
+      await invoke('alist_mkdir', { config, path: newPath });
+      await invoke('write_client_log', { message: `Alist 创建文件夹成功: path=${newPath}` });
+      setShowCreateInput(false);
+      setCreateDraft('');
+      // 创建成功后直接进入新目录，方便继续上传
+      await loadFolders(newPath);
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      setCreateError(message);
+      await invoke('write_client_log', { message: `Alist 创建文件夹失败: path=${browsingPath}/${name}, error=${message}` });
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -242,6 +293,15 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
                 >
                   {showManualInput ? '取消输入' : '输入路径'}
                 </button>
+                <button
+                  type="button"
+                  className="small secondary"
+                  onClick={handleToggleCreate}
+                  disabled={isLoading || isRoot}
+                  title={isRoot ? '根目录下不建议直接新建' : '在当前目录下新建文件夹'}
+                >
+                  {showCreateInput ? '取消新建' : '新建文件夹'}
+                </button>
               </div>
             </div>
 
@@ -270,6 +330,34 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
                   {manualVerifying ? '验证中...' : '验证并跳转'}
                 </button>
                 {manualError && <div className="manual-error">{manualError}</div>}
+              </div>
+            )}
+
+            {showCreateInput && (
+              <div className="folder-picker-manual">
+                <input
+                  ref={createInputRef}
+                  type="text"
+                  value={createDraft}
+                  onChange={(e) => setCreateDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCreateFolder();
+                    }
+                  }}
+                  placeholder="新文件夹名称"
+                  disabled={creating}
+                />
+                <button
+                  type="button"
+                  className="primary small"
+                  onClick={handleCreateFolder}
+                  disabled={creating || !createDraft.trim()}
+                >
+                  {creating ? '创建中...' : '创建'}
+                </button>
+                {createError && <div className="manual-error">{createError}</div>}
               </div>
             )}
 

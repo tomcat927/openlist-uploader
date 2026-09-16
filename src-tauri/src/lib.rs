@@ -460,6 +460,7 @@ pub fn run() {
             crate::commands::write_client_log,
             crate::commands::test_notification,
             crate::commands::alist_list_dir,
+            crate::commands::alist_mkdir,
            crate::commands::get_blocked_files,
            crate::commands::remove_blocked_file,
            crate::commands::resolve_blocked_file,

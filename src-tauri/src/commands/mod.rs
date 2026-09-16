@@ -360,6 +360,23 @@ pub async fn alist_list_dir(config: AppConfig, path: String) -> Result<String, S
 }
 
 #[tauri::command]
+pub async fn alist_mkdir(config: AppConfig, path: String) -> Result<(), String> {
+    log(&format!("收到 Alist 创建目录请求: base_url={}, path={}", config.alist.base_url, path));
+    let client = AlistClient::new(config.alist.base_url, config.alist.token, config.alist.use_system_proxy);
+
+    client
+        .mkdir(&path)
+        .await
+        .map_err(|e| {
+            log(&format!("Alist 创建目录失败: path={}, error={}", path, e));
+            e.to_string()
+        })?;
+
+    log(&format!("Alist 创建目录成功: path={}", path));
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_shutdown_state(
     queue_manager: State<'_, QueueManager>,
 ) -> Result<Option<String>, String> {

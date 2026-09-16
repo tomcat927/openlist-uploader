@@ -536,6 +536,44 @@ impl AlistClient {
             Err(AlistError::Api(resp.message))
         }
     }
+
+    pub async fn mkdir(&self, path: &str) -> Result<(), AlistError> {
+        let url = format!("{}/api/fs/mkdir", self.base_url.trim_end_matches('/'));
+        log(&format!("请求 Alist 创建目录: url={}, path={}, has_token={}", url, path, !self.token.is_empty()));
+
+        let body = serde_json::json!({
+            "path": path
+        });
+
+        let response = self.client
+            .post(&url)
+            .headers(self.headers())
+            .json(&body)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let response_text = response.text().await.map_err(|e| {
+            log(&format!("读取 Alist 创建目录响应失败: status={}, error={}", status, e));
+            AlistError::Api(format!("读取创建目录响应失败: {}", e))
+        })?;
+
+        log(&format!("Alist 创建目录响应: status={}, body={}", status, response_text));
+
+        let resp: AlistResponse<serde_json::Value> = serde_json::from_str(&response_text).unwrap_or(AlistResponse {
+            code: -1,
+            message: response_text.clone(),
+            data: None,
+        });
+
+        if resp.code == 200 || resp.message.contains("exist") {
+            log(&format!("Alist 目录创建成功或已存在: path={}", path));
+            Ok(())
+        } else {
+            Err(AlistError::Api(format!("创建目录失败: {}", resp.message)))
+        }
+    }
 }
 
 fn is_root_alist_path(path: &str) -> bool {
