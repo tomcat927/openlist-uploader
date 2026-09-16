@@ -342,6 +342,8 @@ impl AlistClient {
 
         let mut headers = self.headers();
         headers.insert("File-Path", target_path.parse().unwrap());
+        // 云端已存在同名文件时，OpenList 返回 403 "file exists"，不传输（详见 OpenList fsup.go）
+        headers.insert("Overwrite", "false".parse().unwrap());
         if as_task {
             headers.insert("As-Task", "true".parse().unwrap());
         }
@@ -408,6 +410,10 @@ impl AlistClient {
                 }
             }
             Ok(None)
+        } else if resp.message.contains("file exists") {
+            // Overwrite: false 时服务端检测到云端已有同名文件（HTTP 403）
+            log(&format!("云端已存在同名文件，跳过传输: file_name={}, target={}", file_name, target_path));
+            Err(AlistError::FileExists)
         } else {
             log(&format!("上传失败: file_name={}, code={}, message={}", file_name, resp.code, resp.message));
             Err(AlistError::Api(resp.message))

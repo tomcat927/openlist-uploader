@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use crate::models::*;
-use crate::services::alist_client::AlistClient;
+use crate::services::alist_client::{AlistClient, AlistError};
 use crate::services::queue_manager::{is_root_alist_path, QueueManager, FOUR_GB, FIVE_GB};
 use crate::services::rate_limiter::RateLimiter;
 use crate::utils::log::log;
@@ -439,6 +439,11 @@ impl UploadScheduler {
                 Self::wait_for_alist_task(queue_manager, task, alist_client, &alist_task_id).await
             }
             Ok(None) => Ok(()),
+            Err(AlistError::FileExists) => {
+                // Overwrite: false + 云端已存在同名文件：视为已上传完成，不重传
+                log(&format!("云端已存在同名文件，直接标记完成: file={}, alist_path={}", task.file.name, task.alist_path));
+                Ok(())
+            }
             Err(e) => {
                 log(&format!("Alist API 上传失败: file={}, error={}", task.file.name, e));
                 Err(e.to_string())
