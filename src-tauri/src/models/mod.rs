@@ -38,6 +38,9 @@ pub struct UploadTask {
     /// 上传速度（字节/秒），仅 status=uploading 时有效，前端用于显示
     #[serde(default)]
     pub speed: u64,
+    /// 用户已手动处理（如已通过网页等其他方式补传成功），仅失败记录展示用
+    #[serde(default)]
+    pub resolved: bool,
     /// 上一次轮询的进度百分比（0.0-100.0），仅内存使用，不持久化
     #[serde(skip)]
     pub prev_progress: f64,
@@ -80,6 +83,7 @@ impl UploadTask {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             speed: 0,
+            resolved: false,
             prev_progress: 0.0,
             prev_ts: None,
         }

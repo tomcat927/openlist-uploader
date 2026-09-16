@@ -93,6 +93,24 @@ pub async fn get_history_page(
 }
 
 #[tauri::command]
+pub async fn resolve_history_task(
+    queue_manager: State<'_, QueueManager>,
+    task_id: String,
+) -> Result<(), String> {
+    let mut history = queue_manager.history.write().await;
+    let record = history
+        .records
+        .iter_mut()
+        .find(|r| r.id == task_id)
+        .ok_or_else(|| format!("历史记录不存在: {}", task_id))?;
+    record.resolved = true;
+    record.updated_at = chrono::Utc::now();
+    crate::utils::storage::Storage::save_history(&*history).map_err(|e| e.to_string())?;
+    log(&format!("历史记录已标记为已处理: task_id={}", task_id));
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn clear_history(queue_manager: State<'_, QueueManager>) -> Result<(), String> {
     queue_manager
         .clear_history()

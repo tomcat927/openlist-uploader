@@ -20,6 +20,7 @@ export interface UploadTask {
   created_at: string;
   updated_at: string;
   speed: number;
+  resolved: boolean;
 }
 
 export interface BlockedFileRecord {

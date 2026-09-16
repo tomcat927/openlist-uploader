@@ -445,6 +445,7 @@ pub fn run() {
             crate::commands::get_history,
            crate::commands::get_history_page,
             crate::commands::clear_history,
+            crate::commands::resolve_history_task,
             crate::commands::get_config,
             crate::commands::save_config,
             crate::commands::start_upload,

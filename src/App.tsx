@@ -502,6 +502,17 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   const handlePauseUpload = async () => {
     await pauseUpload();
   };
+  const handleHistoryResolve = async (task: UploadTask) => {
+    try {
+      await invoke('resolve_history_task', { taskId: task.id });
+      await writeClientLog(`历史记录标记已处理: task_id=${task.id}, file=${task.file.path}`);
+      await loadHistoryPage(historyCurrentPage, historyPageSize, historyFilter, historySearchText, historySortOrder);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`标记失败: ${message}`);
+    }
+  };
+
   const handleHistoryRetry = async (task: UploadTask) => {
     try {
       await writeClientLog(`历史记录重试: file=${task.file.path}, alist_path=${task.alist_path}`);
@@ -1213,6 +1224,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         <tr
                           onClick={() => setExpandedHistoryTaskId(expandedHistoryTaskId === task.id ? null : task.id)}
                           style={{ cursor: 'pointer' }}
+                          className={task.resolved ? 'blocked-row-resolved' : ''}
                         >
                           <td><span className="task-file-name" title={task.file.name}>{task.file.name}</span></td>
                           <td>{formatFileSize(task.file.size)}</td>
@@ -1222,11 +1234,16 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                               {task.status === 'completed' ? '成功' : '失败'}
                               {task.error && `: ${task.error}`}
                             </span>
+                            {task.resolved && (
+                              <span className="status-badge status-completed" title="已手动处理（如通过网页等其他方式补传成功）">
+                                已处理
+                              </span>
+                            )}
                           </td>
                           <td>{formatDateTime(task.end_time)}</td>
                           <td>{task.duration ? formatDuration(task.duration) : '-'}</td>
                           <td onClick={(e) => e.stopPropagation()}>
-                            {task.status === 'failed' && (
+                            {task.status === 'failed' && !task.resolved && (
                               <button
                                 type="button"
                                 onClick={() => handleHistoryRetry(task)}
@@ -1234,6 +1251,16 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                                 disabled={historyRetryStatus[task.id] === 'queued'}
                               >
                                 {historyRetryStatus[task.id] === 'queued' ? '已加入队列' : '重试'}
+                              </button>
+                            )}
+                            {task.status === 'failed' && !task.resolved && (
+                              <button
+                                type="button"
+                                onClick={() => handleHistoryResolve(task)}
+                                className="small"
+                                title="已通过其他方式（如网页上传）补传成功，不再需要重试"
+                              >
+                                标记已处理
                               </button>
                             )}
                             <button
