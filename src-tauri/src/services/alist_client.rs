@@ -398,10 +398,11 @@ impl AlistClient {
         })?;
 
         let resp: AlistResponse<serde_json::Value> = serde_json::from_str(&raw_body).map_err(|e| {
-            log(&format!("解析上传响应失败: file_name={}, error={}, raw={}", file_name, e, raw_body));
+            let raw = raw_body.clone();
+            log(&format!("解析上传响应失败: file_name={}, error={}, raw={}", file_name, e, raw));
             AlistError::ApiWithResponse {
                 message: format!("解析响应失败: {}", e),
-                raw: raw_body,
+                raw,
             }
         })?;
 
@@ -428,7 +429,7 @@ impl AlistClient {
             log(&format!("上传失败: file_name={}, code={}, message={}, raw={}", file_name, resp.code, resp.message, raw_body));
             Err(AlistError::ApiWithResponse {
                 message: format!("上传失败: code={}, message={}", resp.code, resp.message),
-                raw: raw_body,
+                raw: raw_body.clone(),
             })
         }
     }
