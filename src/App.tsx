@@ -1288,9 +1288,15 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                                   <code title={task.file.path}>{task.file.path}</code>
                                 </div>
                                 <div>
-                                  <span className="task-path-label">Alist 目标</span>
+                                  <span className="task-path-label">OpenList 目标</span>
                                   <code>{task.alist_path}</code>
                                 </div>
+                                {task.api_response && (
+                                  <div>
+                                    <span className="task-path-label">接口返回值</span>
+                                    <code className="api-response-detail">{task.api_response}</code>
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>

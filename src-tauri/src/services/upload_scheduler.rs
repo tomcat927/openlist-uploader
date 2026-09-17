@@ -360,8 +360,12 @@ impl UploadScheduler {
                 let _ = queue_manager.add_to_history(task.clone()).await;
                 let _ = queue_manager.remove_completed_from_queue(task.id.clone()).await;
             }
-            Err(e) => {
+            Err((e, api_response)) => {
                 log(&format!("上传出错: file={}, error={}, retry_count={}", task.file.name, e, task.retry_count));
+                // 保存 API 原始返回值，供前端排查
+                if let Some(ref raw) = api_response {
+                    task.api_response = Some(raw.clone());
+                }
                 let config = queue_manager.config.read().await;
                 let max_retries = config.upload.max_retries;
                 if task.retry_count >= max_retries {
@@ -426,7 +430,7 @@ impl UploadScheduler {
         alist_client: &AlistClient,
         config: &UploadConfig,
         rate_limiter: Arc<RateLimiter>,
-    ) -> Result<(), String> {
+    ) -> Result<(), (String, Option<String>)> {
         match alist_client.upload_file(
             &task.file.path,
             &task.alist_path,
@@ -437,6 +441,7 @@ impl UploadScheduler {
             Ok(Some(alist_task_id)) => {
                 log(&format!("等待 Alist 后台上传任务完成: file={}, alist_task_id={}", task.file.name, alist_task_id));
                 Self::wait_for_alist_task(queue_manager, task, alist_client, &alist_task_id).await
+                    .map_err(|e| (e, None))
             }
             Ok(None) => Ok(()),
             Err(AlistError::FileExists) => {
@@ -444,9 +449,13 @@ impl UploadScheduler {
                 log(&format!("云端已存在同名文件，直接标记完成: file={}, alist_path={}", task.file.name, task.alist_path));
                 Ok(())
             }
+            Err(AlistError::ApiWithResponse { message, raw }) => {
+                log(&format!("Alist API 上传失败: file={}, error={}, raw={}", task.file.name, message, raw));
+                Err((message, Some(raw)))
+            }
             Err(e) => {
                 log(&format!("Alist API 上传失败: file={}, error={}", task.file.name, e));
-                Err(e.to_string())
+                Err((e.to_string(), None))
             }
         }
     }

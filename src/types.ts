@@ -21,6 +21,7 @@ export interface UploadTask {
   updated_at: string;
   speed: number;
   resolved: boolean;
+  api_response?: string | null;
 }
 
 export interface BlockedFileRecord {

@@ -1450,3 +1450,15 @@ td:has(> .task-file-name) {
 .blocked-row-resolved .task-name-toggle {
   text-decoration: line-through;
 }
+
+.api-response-detail {
+  display: block;
+  max-height: 200px;
+  overflow: auto;
+  padding: 0.5rem;
+  background: var(--bg-color);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  word-break: break-all;
+  white-space: pre-wrap;
+}

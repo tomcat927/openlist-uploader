@@ -41,6 +41,9 @@ pub struct UploadTask {
     /// 用户已手动处理（如已通过网页等其他方式补传成功），仅失败记录展示用
     #[serde(default)]
     pub resolved: bool,
+    /// 上传失败时 OpenList API 的完整返回值（原始 JSON body），用于排查问题
+    #[serde(default)]
+    pub api_response: Option<String>,
     /// 上一次轮询的进度百分比（0.0-100.0），仅内存使用，不持久化
     #[serde(skip)]
     pub prev_progress: f64,
@@ -84,6 +87,7 @@ impl UploadTask {
             updated_at: Utc::now(),
             speed: 0,
             resolved: false,
+            api_response: None,
             prev_progress: 0.0,
             prev_ts: None,
         }

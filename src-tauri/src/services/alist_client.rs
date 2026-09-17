@@ -15,6 +15,8 @@ pub enum AlistError {
     Request(#[from] reqwest::Error),
     #[error("Alist API 错误：{0}")]
     Api(String),
+    #[error("Alist API 错误：{message}\n原始响应：{raw}")]
+    ApiWithResponse { message: String, raw: String },
     #[error("文件已存在")]
     FileExists,
     #[error("认证失败")]
@@ -389,14 +391,22 @@ impl AlistClient {
         
         let status = response.status();
         log(&format!("上传响应: file_name={}, status={}", file_name, status));
-        
-        let resp: AlistResponse<serde_json::Value> = response.json().await.map_err(|e| {
-            log(&format!("解析上传响应失败: file_name={}, error={}", file_name, e));
+
+        let raw_body = response.text().await.map_err(|e| {
+            log(&format!("读取上传响应失败: file_name={}, error={}", file_name, e));
             AlistError::Request(e)
         })?;
-        
+
+        let resp: AlistResponse<serde_json::Value> = serde_json::from_str(&raw_body).map_err(|e| {
+            log(&format!("解析上传响应失败: file_name={}, error={}, raw={}", file_name, e, raw_body));
+            AlistError::ApiWithResponse {
+                message: format!("解析响应失败: {}", e),
+                raw: raw_body,
+            }
+        })?;
+
         log(&format!("上传响应解析: file_name={}, code={}, message={}", file_name, resp.code, resp.message));
-        
+
         if resp.code == 200 {
             log(&format!("上传请求已提交: file_name={}, as_task={}", file_name, as_task));
             if let Some(data) = &resp.data {
@@ -415,8 +425,11 @@ impl AlistClient {
             log(&format!("云端已存在同名文件，跳过传输: file_name={}, target={}", file_name, target_path));
             Err(AlistError::FileExists)
         } else {
-            log(&format!("上传失败: file_name={}, code={}, message={}", file_name, resp.code, resp.message));
-            Err(AlistError::Api(resp.message))
+            log(&format!("上传失败: file_name={}, code={}, message={}, raw={}", file_name, resp.code, resp.message, raw_body));
+            Err(AlistError::ApiWithResponse {
+                message: format!("上传失败: code={}, message={}", resp.code, resp.message),
+                raw: raw_body,
+            })
         }
     }
 
