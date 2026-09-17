@@ -59,12 +59,17 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "APP_VERSION=$newVersion"
 
 
-      - name: Clean stale local bundle output
+      - name: Clean stale build artifacts
         shell: pwsh
         run: |
           if (Test-Path "src-tauri\target\release\bundle") {
             Remove-Item -LiteralPath "src-tauri\target\release\bundle" -Recurse -Force
             Write-Host "Cleaned stale bundle output"
+          }
+          # 清除 tauri-build 的旧 generated permissions（crate name 变更后旧缓存会残留无效路径）
+          if (Test-Path "src-tauri\target\release\build") {
+            Remove-Item -LiteralPath "src-tauri\target\release\build" -Recurse -Force
+            Write-Host "Cleaned stale build script output"
           }
 
       - name: Restore Windows optional native packages
