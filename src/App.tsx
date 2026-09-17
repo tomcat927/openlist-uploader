@@ -666,8 +666,8 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
 
   const handleOpenLogFolder = async () => {
     try {
-      const dataPath = await invoke<string>('get_data_path');
-      const target = dataPath.endsWith('\\') ? dataPath : dataPath + '\\';
+      const logDir = await invoke<string>('get_log_dir');
+      const target = logDir.endsWith('\\') ? logDir : logDir + '\\';
       await invoke('open_file_location', { filePath: target });
       await writeClientLog(`打开日志目录: ${target}`);
     } catch (error) {

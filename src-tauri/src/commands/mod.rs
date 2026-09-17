@@ -222,6 +222,17 @@ pub async fn get_data_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn get_log_dir() -> Result<String, String> {
+    let mut path = dirs::data_local_dir()
+        .ok_or_else(|| "无法获取本地数据目录".to_string())?;
+    path.push("openlist-uploader");
+    if !path.exists() {
+        std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub async fn check_health(config: AppConfig) -> Result<bool, String> {
     log(&format!("收到服务健康检查请求: base_url={}", config.alist.base_url));
 
