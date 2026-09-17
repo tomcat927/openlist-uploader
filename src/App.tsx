@@ -664,6 +664,18 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     }
   };
 
+  const handleOpenLogFolder = async () => {
+    try {
+      const dataPath = await invoke<string>('get_data_path');
+      const target = dataPath.endsWith('\\') ? dataPath : dataPath + '\\';
+      await invoke('open_file_location', { filePath: target });
+      await writeClientLog(`打开日志目录: ${target}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`打开日志目录失败: ${message}`);
+    }
+  };
+
   const handleLogSyncLogin = async () => {
     const ls = configForm.log_sync;
     if (!ls || !ls.base_url || !ls.username || !ls.password) {
@@ -2249,6 +2261,13 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                       className="secondary small"
                     >
                       刷新本地日志列表
+                    </button>
+                    <button
+                      onClick={handleOpenLogFolder}
+                      className="secondary small"
+                      title="打开本地日志所在文件夹"
+                    >
+                      打开日志目录
                     </button>
                   </div>
                   {logSyncLoginStatus === 'success' && (
