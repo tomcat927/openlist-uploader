@@ -3,6 +3,20 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// 115Crypt 加密驱动限制：单级目录名/文件名 UTF-8 字节数不超过 175
+const NAME_BYTES_LIMIT: usize = 175;
+
+/// 检查目标路径各级目录名和文件名是否超限，返回首个超限的段名
+fn check_name_bytes_limit(path: &str) -> Option<String> {
+    for segment in path.split('/').filter(|s| !s.is_empty()) {
+        let bytes = segment.len();
+        if bytes > NAME_BYTES_LIMIT {
+            return Some(segment.to_string());
+        }
+    }
+    None
+}
 use chrono::{DateTime, Utc};
 use crate::models::*;
 use crate::utils::storage::Storage;
@@ -106,8 +120,23 @@ impl QueueManager {
                 target_root,
                 folder_target,
             ));
+
+            // 校验目标路径各级目录名 UTF-8 字节数是否超限
+            if let Some(over_name) = check_name_bytes_limit(&folder_target) {
+                let msg = format!("目标目录名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
+                log(&format!("文件夹被名称长度拦截: folder_name={}, bytes={}", folder_name, over_name.len()));
+                return Err(msg);
+            }
             
             for file_info in files {
+                // 校验文件名 UTF-8 字节数是否超限
+                if let Some(over_name) = check_name_bytes_limit(&file_info.name) {
+                    let msg = format!("文件名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
+                    log(&format!("文件被名称长度拦截: file_name={}, bytes={}", file_info.name, over_name.len()));
+                    self.record_blocked_file(&file_info.path, &file_info.name, file_info.size, &msg, &folder_target).await;
+                    warnings.push(msg);
+                    continue;
+                }
                 match self.validate_large_file(&file_info.name, file_info.size).await {
                     Ok(Some(warning)) => {
                         log(&format!("大文件风险提示: file_path={}, file_name={}, size={}B, warning={}", file_info.path, file_info.name, file_info.size, warning));
@@ -129,6 +158,15 @@ impl QueueManager {
             let (size, name) = crate::utils::fs::get_file_info(&file_path)
                 .await
                 .map_err(|e| e.to_string())?;
+
+            // 校验文件名 UTF-8 字节数是否超限
+            if let Some(over_name) = check_name_bytes_limit(&name) {
+                let msg = format!("文件名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
+                log(&format!("文件被名称长度拦截: file_name={}, bytes={}", name, over_name.len()));
+                self.record_blocked_file(&file_path, &name, size, &msg, &target_root).await;
+                return Err(msg);
+            }
+
             match self.validate_large_file(&name, size).await {
                 Ok(Some(warning)) => {
                     log(&format!("大文件风险提示: file_path={}, file_name={}, size={}B, warning={}", file_path, name, size, warning));

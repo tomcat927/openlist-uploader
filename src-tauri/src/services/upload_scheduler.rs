@@ -496,9 +496,25 @@ impl UploadScheduler {
                     continue;
                 }
 
-                let error = format!("Alist 后台上传任务已消失，但目标目录中未找到文件 {}", task.file.name);
-                log(&format!("Alist 后台上传结果确认失败: file={}, alist_task_id={}, error={}", task.file.name, alist_task_id, error));
-                return Err(error);
+                // 任务消失且文件不存在：查全部任务列表找失败错误信息
+                let mut error_detail = format!("Alist 后台上传任务已消失，但目标目录中未找到文件 {}", task.file.name);
+                match alist_client.get_all_upload_tasks().await {
+                    Ok(all_tasks) => {
+                        if let Some(failed_task) = all_tasks.into_iter().find(|t| t.id == alist_task_id) {
+                            if !failed_task.error.is_empty() {
+                                error_detail = format!("OpenList 后台任务失败: {}", failed_task.error);
+                                task.api_response = Some(format!("{{\"state\":{},\"error\":\"{}\",\"status\":\"{}\"}}", failed_task.state, failed_task.error, failed_task.status));
+                                log(&format!("查到失败任务错误: file={}, alist_task_id={}, error={}", task.file.name, alist_task_id, failed_task.error));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log(&format!("查询全部上传任务失败，无法获取错误详情: {}", e));
+                    }
+                }
+
+                log(&format!("Alist 后台上传结果确认失败: file={}, alist_task_id={}, error={}", task.file.name, alist_task_id, error_detail));
+                return Err(error_detail);
             };
 
             missing_checks = 0;
