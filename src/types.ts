@@ -208,7 +208,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     username: '',
     password: '',
     token: '',
-    target_path: '/本地磁盘/alist-uploader-logs',
+    target_path: '/本地磁盘/openlist-uploader-logs',
     sync_on_exit: true,
     sync_interval_minutes: 30,
     use_system_proxy: false,

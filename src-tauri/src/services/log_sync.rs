@@ -39,7 +39,7 @@ fn hash_password(password: &str) -> String {
 
 fn get_app_dir() -> Option<PathBuf> {
     let mut app_dir = dirs::data_local_dir()?;
-    app_dir.push("alist-uploader");
+    app_dir.push("openlist-uploader");
     if !app_dir.exists() {
         let _ = fs::create_dir_all(&app_dir);
     }

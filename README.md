@@ -1,12 +1,12 @@
-# Alist 上传管理器
+# Openlist 上传管理器
 
-基于 Tauri + React 的 Alist 网盘上传管理工具，支持队列管理、定时上传、限速、热更新、系统通知等功能。
+基于 Tauri + React 的 OpenList 网盘上传管理工具，支持队列管理、定时上传、限速、热更新、系统通知等功能。
 
 ## 下载安装
 
 从 GitHub Releases 下载最新安装包：
 
-**https://github.com/tomcat927/alist-uploader/releases/latest**
+**https://github.com/tomcat927/openlist-uploader/releases/latest**
 
 下载 `.exe` 安装包，双击安装即可。
 
@@ -117,7 +117,7 @@
 
 ## 数据存储
 
-- **Windows**：`%APPDATA%\alist-uploader\`
+- **Windows**：`%APPDATA%\openlist-uploader\`（从旧版 `alist-uploader` 升级时自动迁移数据）
 - 存储文件：`queue.json`（队列）、`history.json`（历史）、`config.json`（配置）、`blocked_files.json`（拦截记录）
 
 ## 开发

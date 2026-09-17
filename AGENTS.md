@@ -6,7 +6,7 @@
 
 每次 `git push` 后，必须检查 GitHub Actions 构建结果：
 
-1. **获取构建状态**：通过 GitHub API 查看 `https://api.github.com/repos/tomcat927/alist-uploader/actions/runs?per_page=1`
+1. **获取构建状态**：通过 GitHub API 查看 `https://api.github.com/repos/tomcat927/openlist-uploader/actions/runs?per_page=1`
 2. **等待构建完成**：构建约 8-10 分钟，轮询直到 `status` 变为 `completed`
 3. **检查构建结果**：
    - 如果 `conclusion` 为 `success`：构建成功，任务完成
@@ -26,7 +26,7 @@ GitHub API 需要 token 认证，使用 `Authorization: Bearer <token>` header�
 
 ### 仓库信息
 
-- 仓库：`tomcat927/alist-uploader`
+- 仓库：`tomcat927/openlist-uploader`
 - 默认分支：`master`
 - 构建 workflow：`.github/workflows/build-windows.yml`
 - 构建触发：push 到 master 或手动 workflow_dispatch

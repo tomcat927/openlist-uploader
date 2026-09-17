@@ -23,7 +23,7 @@ fn append_log(file_name: &str, message: &str) {
         return;
     };
 
-    log_dir.push("alist-uploader");
+    log_dir.push("openlist-uploader");
 
     if fs::create_dir_all(&log_dir).is_err() {
         return;
@@ -47,7 +47,7 @@ fn install_panic_hook() {
 /// 运行标记文件路径：正常退出时删除，异常终止时残留
 fn running_marker_path() -> Option<std::path::PathBuf> {
     let mut dir = dirs::data_local_dir()?;
-    dir.push("alist-uploader");
+    dir.push("openlist-uploader");
     Some(dir.join("running.marker"))
 }
 
@@ -104,6 +104,9 @@ fn kill_alist_on_exit() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 旧版 alist-uploader 数据目录迁移到 openlist-uploader（必须在任何日志/存储访问之前）
+    crate::utils::storage::Storage::migrate_legacy_dirs();
+
     install_panic_hook();
     append_log("startup.log", "application startup begin");
     crate::utils::log::log(&format!("application startup begin; version={}, build_marker=state-free-login-config-v2", env!("CARGO_PKG_VERSION")));
@@ -374,7 +377,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show, &devtools, &quit])?;
             TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
-                .tooltip("alist-uploader")
+                .tooltip("openlist-uploader")
                 .menu(&menu)
                 .on_menu_event(|app_handle, event| {
                     match event.id.as_ref() {

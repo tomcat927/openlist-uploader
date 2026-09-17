@@ -155,14 +155,14 @@ jobs:
         run: |
           $version = $env:APP_VERSION
           $repo = $env:GITHUB_REPOSITORY
-          # exe name pattern: alist-uploader_{version}_x64-setup.exe
-          $exeName = "alist-uploader_${version}_x64-setup.exe"
+          # exe name pattern: openlist-uploader_{version}_x64-setup.exe
+          $exeName = "openlist-uploader_${version}_x64-setup.exe"
           $sigName = "${exeName}.sig"
           $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
           $notes = "每次 push 自动构建的最新版本。"
 
           # Download the .sig file from the release to get the signature
-          $sigLocal = "alist-uploader.sig"
+          $sigLocal = "openlist-uploader.sig"
           gh release download latest --pattern $sigName --repo $repo --clobber 2>$null
           if (-not (Test-Path $sigName)) {
             Write-Host "ERROR: signature file $sigName not found in release"

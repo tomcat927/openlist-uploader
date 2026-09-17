@@ -6,7 +6,8 @@ use serde::de::DeserializeOwned;
 use dirs::config_dir;
 use crate::models::*;
 
-const APP_NAME: &str = "alist-uploader";
+const APP_NAME: &str = "openlist-uploader";
+const LEGACY_APP_NAME: &str = "alist-uploader";
 
 pub struct Storage;
 
@@ -15,12 +16,27 @@ impl Storage {
         let config_dir = config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(APP_NAME);
-        
+
         if !config_dir.exists() {
             fs::create_dir_all(&config_dir).ok();
         }
-        
+
         config_dir
+    }
+
+    /// 旧版数据目录迁移：把 alist-uploader 目录重命名为 openlist-uploader（同卷瞬间完成）。
+    /// 目标已存在（新版本已初始化）或旧目录不存在时跳过。
+    pub fn migrate_legacy_dirs() {
+        let bases = [config_dir(), dirs::data_local_dir()];
+        for base in bases.into_iter().flatten() {
+            let old_dir = base.join(LEGACY_APP_NAME);
+            let new_dir = base.join(APP_NAME);
+            if old_dir.exists() && !new_dir.exists() {
+                if fs::rename(&old_dir, &new_dir).is_ok() {
+                    eprintln!("[migrate] 已迁移数据目录: {} -> {}", old_dir.display(), new_dir.display());
+                }
+            }
+        }
     }
 
     fn read_json<T: DeserializeOwned + Default>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {

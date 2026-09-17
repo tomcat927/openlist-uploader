@@ -47,8 +47,15 @@ function App() {
   const [alistPath, setAlistPath] = useState('/');
   const [recentPaths, setRecentPaths] = useState<string[]>(() => {
     try {
-      const stored = localStorage.getItem('alist-uploader:recent-paths');
-      return stored ? JSON.parse(stored) : [];
+      const stored = localStorage.getItem('openlist-uploader:recent-paths')
+        ?? localStorage.getItem('alist-uploader:recent-paths');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        localStorage.removeItem('alist-uploader:recent-paths');
+        localStorage.setItem('openlist-uploader:recent-paths', JSON.stringify(parsed));
+        return parsed;
+      }
+      return [];
     } catch {
       return [];
     }
@@ -59,7 +66,7 @@ function App() {
       const filtered = prev.filter(p => p !== path);
       const next = [path, ...filtered].slice(0, 8);
       try {
-        localStorage.setItem('alist-uploader:recent-paths', JSON.stringify(next));
+        localStorage.setItem('openlist-uploader:recent-paths', JSON.stringify(next));
       } catch {}
       return next;
     });
@@ -842,12 +849,38 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Alist 上传管理器</h1>
+        <h1>Openlist 上传管理器</h1>
+        <nav className="app-nav">
+          <button
+            className={activeTab === 'queue' ? 'active' : ''}
+            onClick={() => setActiveTab('queue')}
+          >
+            待上传队列 ({queue.length})
+          </button>
+          <button
+            className={activeTab === 'history' ? 'active' : ''}
+            onClick={() => setActiveTab('history')}
+          >
+            历史记录 ({history.length})
+          </button>
+          <button
+            className={activeTab === 'blocked' ? 'active' : ''}
+            onClick={() => { setActiveTab('blocked'); loadBlockedFiles(); }}
+          >
+            拦截记录 ({blockedFiles.length})
+          </button>
+          <button
+            className={activeTab === 'settings' ? 'active' : ''}
+            onClick={() => setActiveTab('settings')}
+          >
+            设置
+          </button>
+        </nav>
         <div className="header-status">
           <div className="alist-status">
             <span className={`status-dot ${alistChecking ? 'checking' : alistServiceAvailable && alistConnected ? 'connected' : alistServiceAvailable ? 'warning' : 'disconnected'}`} />
             <span className="status-label">
-              {alistChecking ? '检测中...' : alistServiceAvailable && alistConnected ? 'Alist 已连接' : alistServiceAvailable ? 'Alist 已启动，未登录' : 'Alist 服务不可用'}
+              {alistChecking ? '检测中...' : alistServiceAvailable && alistConnected ? 'Openlist 已连接' : alistServiceAvailable ? 'Openlist 已启动，未登录' : 'Openlist 服务不可用'}
             </span>
           </div>
           <span className={`status-indicator ${isUploading ? 'active' : ''}`}>
@@ -859,33 +892,6 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
           </span>
         </div>
       </header>
-
-      <nav className="app-nav">
-        <button 
-          className={activeTab === 'queue' ? 'active' : ''}
-          onClick={() => setActiveTab('queue')}
-        >
-          待上传队列 ({queue.length})
-        </button>
-        <button 
-          className={activeTab === 'history' ? 'active' : ''}
-          onClick={() => setActiveTab('history')}
-        >
-          历史记录 ({history.length})
-        </button>
-        <button 
-          className={activeTab === 'blocked' ? 'active' : ''}
-          onClick={() => { setActiveTab('blocked'); loadBlockedFiles(); }}
-        >
-          拦截记录 ({blockedFiles.length})
-        </button>
-        <button
-          className={activeTab === 'settings' ? 'active' : ''}
-          onClick={() => setActiveTab('settings')}
-        >
-          设置
-        </button>
-      </nav>
 
       <main className="app-content">
         {activeTab === 'queue' && (
@@ -2175,7 +2181,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         ...configForm,
                         log_sync: { ...configForm.log_sync!, target_path: e.target.value }
                       })}
-                      placeholder="/本地磁盘/alist-uploader-logs"
+                      placeholder="/本地磁盘/openlist-uploader-logs"
                     />
                     <span className="field-hint">日志文件将上传到此目录（覆盖写）</span>
                   </div>

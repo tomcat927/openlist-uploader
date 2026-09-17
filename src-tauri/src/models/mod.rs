@@ -413,7 +413,7 @@ fn default_log_sync_interval() -> u32 {
 }
 
 fn default_log_sync_target_path() -> String {
-    "/本地磁盘/alist-uploader-logs".to_string()
+    "/本地磁盘/openlist-uploader-logs".to_string()
 }
 
 impl Default for LogSyncConfig {

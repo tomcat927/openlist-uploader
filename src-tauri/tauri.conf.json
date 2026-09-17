@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "alist-uploader",
+  "productName": "openlist-uploader",
   "version": "0.1.0",
-  "identifier": "com.root.alist-uploader",
+  "identifier": "com.root.openlist-uploader",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "alist-uploader",
+        "title": "openlist-uploader",
         "width": 800,
         "height": 600,
         "devtools": true
@@ -45,8 +45,8 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3NDI2N0ZENDJGQ0UwQTMKUldTajRQeEMvV2RDMTJoWUZFcDBiNldSU3E5dU1oVVdQbjlzRXowUzd0cUpiODRtRVYvTUN3eFUK",
       "endpoints": [
-        "https://gh-proxy.org/https://github.com/tomcat927/alist-uploader/releases/latest/download/latest.json",
-        "https://github.com/tomcat927/alist-uploader/releases/latest/download/latest.json"
+        "https://gh-proxy.org/https://github.com/tomcat927/openlist-uploader/releases/latest/download/latest.json",
+        "https://github.com/tomcat927/openlist-uploader/releases/latest/download/latest.json"
       ]
     }
   }

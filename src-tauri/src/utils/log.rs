@@ -11,7 +11,7 @@ fn get_app_dir() -> Option<PathBuf> {
         return None;
     };
 
-    app_dir.push("alist-uploader");
+    app_dir.push("openlist-uploader");
 
     if fs::create_dir_all(&app_dir).is_err() {
         return None;
