@@ -564,61 +564,11 @@ impl UploadScheduler {
         error: &str,
         notification: &NotificationConfig,
     ) {
-        for channel in &notification.channels {
-            match channel.as_str() {
-                "feishu" => {
-                    Self::send_feishu_notification(
-                        &notification.webhook_url,
-                        file_name,
-                        error,
-                    ).await;
-                }
-                _ => {
-                    log::warn!("不支持的通知渠道: {}", channel);
-                }
-            }
-        }
-    }
-
-    async fn send_feishu_notification(
-        webhook_url: &str,
-        file_name: &str,
-        error: &str,
-    ) {
         let message = format!(
-            "## 上传失败通知\n\n\
-            **文件**: {}\n\
-            **错误**: {}\n\
-            **状态**: 队列已停止，等待人工处理\n\n\
-            _请检查文件路径、Alist 服务状态或网络连接_",
+            "上传失败通知\n文件: {}\n错误: {}\n状态: 队列已停止，等待人工处理\n请检查文件路径、OpenList 服务状态或网络连接",
             file_name, error
         );
-
-        let payload = serde_json::json!({
-            "msg_type": "interactive",
-            "card": {
-                "header": {
-                    "title": {
-                        "tag": "plain_text",
-                        "content": "上传失败通知"
-                    },
-                    "template": "red"
-                },
-                "elements": [{
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": message
-                    }
-                }]
-            }
-        });
-
-        if let Err(e) = Self::post_feishu_card(webhook_url, &payload).await {
-            log::error!("发送飞书通知失败: {}", e);
-        } else {
-            log::info!("飞书通知发送成功");
-        }
+        Self::send_text_notification(notification, &message).await;
     }
 
     pub async fn test_notification(notification: &NotificationConfig) -> Result<(), String> {
