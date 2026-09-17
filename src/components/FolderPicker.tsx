@@ -191,9 +191,9 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
       setCreateError('文件夹名称不能包含 / \\ 等非法字符');
       return;
     }
-    // 115 网盘驱动限制：单级目录名称不超过 20 个字
-    if (name.length > 20) {
-      setCreateError(`文件夹名称不能超过 20 个字（115 网盘限制），当前 ${name.length} 个字`);
+    // 115 网盘驱动限制：单级目录名称不超过 255 个字符
+    if (name.length > 255) {
+      setCreateError(`文件夹名称不能超过 255 个字符，当前 ${name.length} 个字符`);
       return;
     }
     setCreating(true);
