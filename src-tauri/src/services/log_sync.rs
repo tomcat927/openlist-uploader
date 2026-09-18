@@ -25,6 +25,13 @@ fn load_last_sync_at() -> Option<String> {
     Storage::load_config().ok()?.log_sync.last_sync_at
 }
 
+fn save_token_to_config(token: &str) {
+    if let Ok(mut config) = Storage::load_config() {
+        config.log_sync.token = token.to_string();
+        let _ = Storage::save_config(&config);
+    }
+}
+
 #[derive(Debug, serde::Deserialize, Default)]
 struct LogSyncLoginResp {
     pub token: String,
@@ -253,10 +260,12 @@ pub async fn sync_logs(config: &LogSyncConfig) -> LogSyncResult {
 
     let client = LogSyncClient::new(config);
 
+    // token 为空时自动登录
     if config.token.is_empty() && !config.username.is_empty() && !config.password.is_empty() {
         match client.login(&config.username, &config.password).await {
             Ok(token) => {
                 log("日志同步: 自动登录成功，token已缓存");
+                save_token_to_config(&token);
                 let client = LogSyncClient {
                     client: client.client.clone(),
                     base_url: client.base_url.clone(),
@@ -271,7 +280,35 @@ pub async fn sync_logs(config: &LogSyncConfig) -> LogSyncResult {
         }
     }
 
-    sync_logs_with_client(&client, config).await
+    let result = sync_logs_with_client(&client, config).await;
+
+    // 如果失败且可能是 token 过期，尝试重新登录后重试一次
+    if result.failed > 0 && result.success == 0 && !config.username.is_empty() && !config.password.is_empty() {
+        let has_auth_error = result.details.iter().any(|d| {
+            let dl = d.to_lowercase();
+            dl.contains("401") || dl.contains("unauthorized") || dl.contains("token") || dl.contains("认证")
+        });
+        if has_auth_error {
+            log("日志同步: 检测到可能的 token 过期，尝试重新登录");
+            match client.login(&config.username, &config.password).await {
+                Ok(new_token) => {
+                    log("日志同步: 重新登录成功，token已更新");
+                    save_token_to_config(&new_token);
+                    let new_client = LogSyncClient {
+                        client: client.client.clone(),
+                        base_url: client.base_url.clone(),
+                        token: new_token,
+                    };
+                    return sync_logs_with_client(&new_client, config).await;
+                }
+                Err(e) => {
+                    log(&format!("日志同步: 重新登录失败: {}", e));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 async fn sync_logs_with_client(client: &LogSyncClient, config: &LogSyncConfig) -> LogSyncResult {
