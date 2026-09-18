@@ -3,6 +3,7 @@ import { useAppStore } from './store/appStore';
 import { open, ask } from '@tauri-apps/plugin-dialog';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -88,6 +89,7 @@ function App() {
   const [expandedHistoryTaskId, setExpandedHistoryTaskId] = useState<string | null>(null);
   const [expandedBlockedIndex, setExpandedBlockedIndex] = useState<number | null>(null);
   const [compressingIndex, setCompressingIndex] = useState<number | null>(null);
+  const [compressProgress, setCompressProgress] = useState(0);
   const [queueFilter, setQueueFilter] = useState<'all' | 'pending' | 'uploading'>('all');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [queueSearchText, setQueueSearchText] = useState('');
@@ -156,6 +158,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
 
   const handleSplitCompress = async (record: BlockedFileRecord, index: number) => {
     setCompressingIndex(index);
+    setCompressProgress(0);
     try {
       await writeClientLog(`开始分卷压缩: file=${record.file_path}, target=${record.target_path}`);
       const outDir = await invoke<string>('split_compress_file', { filePath: record.file_path });
@@ -237,9 +240,15 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     loadBlockedFiles();
     loadConfig();
     invoke<LocalLogFileInfo[]>('get_local_log_files').then(setLocalLogFiles).catch(() => {});
-    
+
     // 启动心跳检测
     startHealthCheck();
+
+    // 监听压缩进度事件
+    const unlistenCompress = listen<number>('compress_progress', (event) => {
+      setCompressProgress(event.payload);
+    });
+    return () => { unlistenCompress.then(fn => fn()); };
     
     // 监听文件拖拽事件
     let unlistenFn: (() => void) | null = null;
@@ -1468,7 +1477,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                             disabled={compressingIndex === realIndex}
                             title="自动分卷压缩并加入上传队列"
                           >
-                            {compressingIndex === realIndex ? '处理中...' : '分卷压缩'}
+                            {compressingIndex === realIndex ? `压缩中 ${compressProgress}%` : '分卷压缩'}
                           </button>
                         )}
                         {!record.resolved && record.file_path.endsWith('-dir') && (

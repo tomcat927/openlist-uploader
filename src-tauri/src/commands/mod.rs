@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{State, Emitter};
 use crate::models::*;
 use crate::services::queue_manager::QueueManager;
 use crate::services::alist_client::AlistClient;
@@ -721,10 +721,12 @@ pub async fn get_local_log_files() -> Result<Vec<LocalLogFileInfo>, String> {
 
 #[tauri::command]
 pub async fn split_compress_file(
+    app: tauri::AppHandle,
     queue_manager: State<'_, QueueManager>,
     file_path: String,
 ) -> Result<String, String> {
     use std::path::Path;
+    use std::io::Read;
 
     let config = queue_manager.config.read().await;
     let rar_path = config.upload.rar_path.clone();
@@ -789,13 +791,54 @@ pub async fn split_compress_file(
 
     log(&format!("执行分卷压缩: rar={} args=a {} -m1 -ep3 {} {}", rar_path, volume_arg, rar_base.display(), file_path));
 
-    let output = cmd.output()
-        .map_err(|e| format!("执行 rar.exe 失败: {}", e))?;
+    let mut child = cmd.spawn()
+        .map_err(|e| format!("启动 rar.exe 失败: {}", e))?;
 
-    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
+    // 逐字符读取 stdout，解析百分比
+    let mut stdout = child.stdout.take().ok_or("无法获取 rar stdout")?;
+    let mut stderr = child.stderr.take().ok_or("无法获取 rar stderr")?;
+    let mut stdout_text = String::new();
+    let mut stderr_text = String::new();
 
-    // 记录 rar 输出到日志
+    // 读 stdout 简单方案：逐块读取，用 \r 分割取最后一段解析百分比
+    let mut buf = [0u8; 4096];
+    let mut line_buf = String::new();
+    loop {
+        match stdout.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let chunk = String::from_utf8_lossy(&buf[..n]);
+                stdout_text.push_str(&chunk);
+                line_buf.push_str(&chunk);
+                // rar 用 \r 刷新进度，按 \r 和 \n 分割
+                while let Some(pos) = line_buf.find(|c| c == '\r' || c == '\n') {
+                    let line = line_buf[..pos].trim().to_string();
+                    if !line.is_empty() {
+                        // 解析末尾百分比
+                        if let Some(pct) = parse_rar_progress(&line) {
+                            let _ = app.emit("compress_progress", pct);
+                            log(&format!("压缩进度: {}%", pct));
+                        }
+                    }
+                    line_buf = line_buf[pos+1..].to_string();
+                }
+            }
+            Err(e) => {
+                log(&format!("读取 rar stdout 失败: {}", e));
+                break;
+            }
+        }
+    }
+
+    // 读 stderr
+    stderr.read_to_string(&mut stderr_text).ok();
+
+    let status = child.wait()
+        .map_err(|e| format!("等待 rar.exe 结束失败: {}", e))?;
+
+    // 最终进度 100%
+    let _ = app.emit("compress_progress", 100);
+
     if !stdout_text.is_empty() {
         log(&format!("rar stdout:\n{}", stdout_text));
     }
@@ -803,8 +846,8 @@ pub async fn split_compress_file(
         log(&format!("rar stderr:\n{}", stderr_text));
     }
 
-    if !output.status.success() {
-        let msg = format!("rar.exe 返回错误码 {}: {}", output.status.code().unwrap_or(-1), stderr_text);
+    if !status.success() {
+        let msg = format!("rar.exe 返回错误码 {}: {}", status.code().unwrap_or(-1), stderr_text);
         log(&msg);
         return Err(msg);
     }
@@ -940,4 +983,23 @@ fn extract_part_suffix(name: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// 从 rar.exe 输出行解析百分比
+/// rar 输出格式如 "Creating archive xxx.rar" 或 "Adding  file.mp4    45%"
+fn parse_rar_progress(line: &str) -> Option<u8> {
+    // 找末尾的 N% 模式
+    let trimmed = line.trim();
+    if let Some(pos) = trimmed.rfind('%') {
+        // 往前找数字
+        let before = &trimmed[..pos];
+        let num_start = before.rfind(|c: char| !c.is_ascii_digit())?;
+        let num_str = &before[num_start+1..];
+        if let Ok(n) = num_str.parse::<u8>() {
+            if n <= 100 {
+                return Some(n);
+            }
+        }
+    }
+    None
 }
