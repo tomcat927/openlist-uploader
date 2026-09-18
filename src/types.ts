@@ -81,6 +81,7 @@ export interface UploadConfig {
   auto_start_on_boot: boolean;
   progress_notify_enabled: boolean;
   progress_notify_interval: number;
+  refresh_index_after_upload: boolean;
   speed_limit: number;
   as_task: boolean;
   upload_method: string;
@@ -169,6 +170,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     auto_start_on_boot: false,
     progress_notify_enabled: false,
     progress_notify_interval: 30,
+    refresh_index_after_upload: true,
     speed_limit: 0,
     as_task: true,
     upload_method: 'stream',

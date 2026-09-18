@@ -1682,6 +1682,18 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 />
                 <span className="field-hint">0 表示不限，达到数量后本轮自动停止</span>
               </div>
+              <div className="form-group checkbox-group">
+                <input
+                  type="checkbox"
+                  id="refreshIndexAfterUpload"
+                  checked={configForm.upload.refresh_index_after_upload}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, refresh_index_after_upload: e.target.checked }
+                  })}
+                />
+                <label htmlFor="refreshIndexAfterUpload">上传成功后刷新目标目录触发索引更新</label>
+              </div>
               <div className="form-group">
                 <label>上传限速 MB/s:</label>
                 <div className="speed-limit-control">

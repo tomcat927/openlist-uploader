@@ -601,8 +601,45 @@ impl AlistClient {
         }
     }
 
-    pub async fn mkdir(&self, path: &str) -> Result<(), AlistError> {
-        let url = format!("{}/api/fs/mkdir", self.base_url.trim_end_matches('/'));
+    /// 强制刷新目录（refresh=true 穿透缓存），触发 OpenList 增量索引更新
+    pub async fn refresh_directory(&self, path: &str) -> Result<(), AlistError> {
+        let url = format!("{}/api/fs/list", self.base_url.trim_end_matches('/'));
+        log(&format!("刷新目录触发增量索引: path={}", path));
+
+        let body = serde_json::json!({
+            "path": path,
+            "refresh": true,
+            "page": 1,
+            "per_page": 1
+        });
+
+        let response = self.client
+            .post(&url)
+            .headers(self.headers())
+            .json(&body)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let response_text = response.text().await.map_err(|e| {
+            log(&format!("读取刷新目录响应失败: status={}, error={}", status, e));
+            AlistError::Api(format!("读取刷新目录响应失败: {}", e))
+        })?;
+
+        let resp: AlistResponse<serde_json::Value> = serde_json::from_str(&response_text)
+            .unwrap_or(AlistResponse { code: -1, message: response_text.clone(), data: None });
+
+        if resp.code == 200 {
+            log(&format!("刷新目录成功（增量索引已触发）: path={}", path));
+            Ok(())
+        } else {
+            log(&format!("刷新目录失败: path={}, code={}, message={}", path, resp.code, resp.message));
+            Err(AlistError::Api(resp.message))
+        }
+    }
+
+    pub async fn mkdir(&self, path: &str) -> Result<(), AlistError> {        let url = format!("{}/api/fs/mkdir", self.base_url.trim_end_matches('/'));
         log(&format!("请求 Alist 创建目录: url={}, path={}, has_token={}", url, path, !self.token.is_empty()));
 
         let body = serde_json::json!({

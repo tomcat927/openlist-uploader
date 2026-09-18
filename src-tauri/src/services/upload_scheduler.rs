@@ -359,6 +359,18 @@ impl UploadScheduler {
                 queue_manager.increment_tasks_uploaded();
                 let _ = queue_manager.add_to_history(task.clone()).await;
                 let _ = queue_manager.remove_completed_from_queue(task.id.clone()).await;
+
+                // 上传成功后刷新目标目录，触发 OpenList 增量索引更新
+                if upload_config.refresh_index_after_upload {
+                    let refresh_client = AlistClient::new(
+                        alist_config.base_url.clone(),
+                        alist_config.token.clone(),
+                        alist_config.use_system_proxy,
+                    );
+                    if let Err(e) = refresh_client.refresh_directory(&task.alist_path).await {
+                        log(&format!("刷新目标目录失败（不影响上传结果）: path={}, error={}", task.alist_path, e));
+                    }
+                }
             }
             Err((e, api_response)) => {
                 log(&format!("上传出错: file={}, error={}, retry_count={}", task.file.name, e, task.retry_count));

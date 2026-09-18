@@ -265,6 +265,9 @@ pub struct UploadConfig {
     /// 进度通知间隔（分钟，默认 30）
     #[serde(default = "default_progress_notify_interval")]
     pub progress_notify_interval: u32,
+    /// 上传成功后刷新目标目录触发 OpenList 增量索引（默认开启）
+    #[serde(default = "default_true")]
+    pub refresh_index_after_upload: bool,
     pub schedule: Option<ScheduledUpload>,
     pub notification: Option<NotificationConfig>,
 }
@@ -318,6 +321,7 @@ impl Default for UploadConfig {
             auto_start_on_boot: false,
             progress_notify_enabled: false,
             progress_notify_interval: 30,
+            refresh_index_after_upload: true,
             schedule: Some(ScheduledUpload::default()),
             notification: None,
         }
