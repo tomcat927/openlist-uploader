@@ -179,6 +179,31 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     }
   };
 
+  const handleRenameAndUpload = async (record: BlockedFileRecord, index: number) => {
+    setCompressingIndex(index);
+    try {
+      await writeClientLog(`开始改名重传: file=${record.file_path}, target=${record.target_path}`);
+      const newPath = await invoke<string>('rename_blocked_folder', { folderPath: record.file_path });
+      await writeClientLog(`改名完成: new_path=${newPath}`);
+
+      // 自动加入上传队列
+      const result = await addToFileQueue(newPath, record.target_path);
+      if (result.warnings.length > 0) {
+        window.alert(result.warnings.join('\n'));
+      }
+
+      // 标记拦截记录已处理
+      await resolveBlockedFile(index);
+      await writeClientLog(`改名重传并加入队列成功: original=${record.file_path}, renamed=${newPath}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`改名重传失败: ${message}`);
+      await writeClientLog(`改名重传失败: file=${record.file_path}, error=${message}`);
+    } finally {
+      setCompressingIndex(null);
+    }
+  };
+
   const clearBlockedFiles = async () => {
     await invoke('clear_blocked_files');
     setBlockedFiles([]);
@@ -1439,7 +1464,17 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                             disabled={compressingIndex === realIndex}
                             title="自动分卷压缩并加入上传队列"
                           >
-                            {compressingIndex === realIndex ? '压缩中...' : '分卷压缩'}
+                            {compressingIndex === realIndex ? '处理中...' : '分卷压缩'}
+                          </button>
+                        )}
+                        {!record.resolved && record.file_path.endsWith('-dir') && (
+                          <button
+                            onClick={() => handleRenameAndUpload(record, realIndex)}
+                            className="small primary"
+                            disabled={compressingIndex === realIndex}
+                            title="自动截断文件夹名和分卷文件名，创建存根后加入上传队列"
+                          >
+                            {compressingIndex === realIndex ? '处理中...' : '改名重传'}
                           </button>
                         )}
                         {!record.resolved && (

@@ -803,3 +803,118 @@ pub async fn split_compress_file(
     log(&format!("分卷压缩完成: file={}, out_dir={}, parts={:?}", file_name, out_dir_str, parts));
     Ok(out_dir_str)
 }
+
+/// 将超长名称的分卷文件夹重命名为短名，创建 TXT 存根，重命名内部 part 文件
+#[tauri::command]
+pub async fn rename_blocked_folder(
+    folder_path: String,
+) -> Result<String, String> {
+    use std::path::Path;
+    use std::io::Write;
+
+    let src_path = Path::new(&folder_path);
+    if !src_path.exists() || !src_path.is_dir() {
+        return Err(format!("文件夹不存在或不是目录: {}", folder_path));
+    }
+
+    let original_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let original_bytes = original_name.len();
+    let parent_dir = src_path.parent().ok_or("无法获取父目录")?;
+
+    // 截断到 50 字符 + "-dir"
+    let base_name = if original_name.ends_with("-dir") {
+        original_name[..original_name.len() - 4].to_string()
+    } else {
+        original_name.clone()
+    };
+    let truncated: String = base_name.chars().take(50).collect();
+    let new_name = format!("{}-dir", truncated);
+    let new_path = parent_dir.join(&new_name);
+
+    if new_path == *src_path {
+        return Err("新名称与原名称相同，无需改名".into());
+    }
+
+    // 如果目标已存在，加序号
+    let mut final_path = new_path.clone();
+    let mut suffix = 1;
+    while final_path.exists() {
+        final_path = parent_dir.join(format!("{}-{}-dir", truncated, suffix));
+        suffix += 1;
+    }
+    let final_name = final_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&new_name)
+        .to_string();
+
+    // 先收集内部 part 文件列表（重命名文件夹前）
+    let mut part_files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(src_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".rar") {
+                    part_files.push((path, name.to_string()));
+                }
+            }
+        }
+    }
+
+    // 创建 TXT 存根（在原文件夹内）
+    let txt_path = src_path.join("原名.txt");
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let txt_content = format!(
+        "原始文件名: {}\n原始字节数: {} 字节\n改名原因: 超过 115Crypt 加密驱动 175 字节限制\n新文件夹名: {}\n改名时间: {}\n源路径: {}",
+        original_name, original_bytes, final_name, timestamp, folder_path
+    );
+    match std::fs::File::create(&txt_path) {
+        Ok(mut f) => {
+            let _ = f.write_all(txt_content.as_bytes());
+            log(&format!("已创建改名存根: {}", txt_path.display()));
+        }
+        Err(e) => {
+            log(&format!("创建改名存根失败: {}", e));
+        }
+    }
+
+    // 重命名 part 文件（先重命名内部文件，再重命名文件夹）
+    let new_base = if final_name.ends_with("-dir") {
+        final_name[..final_name.len() - 4].to_string()
+    } else {
+        final_name.clone()
+    };
+
+    for (path, name) in &part_files {
+        // 原名格式：xxx.part1.rar → 新名：新base.part1.rar
+        if let Some(part_suffix) = extract_part_suffix(name) {
+            let new_file_name = format!("{}.{}", new_base, part_suffix);
+            let new_file_path = src_path.join(&new_file_name);
+            if let Err(e) = std::fs::rename(path, &new_file_path) {
+                log(&format!("重命名 part 文件失败: {} -> {}, error={}", name, new_file_name, e));
+            } else {
+                log(&format!("重命名 part 文件: {} -> {}", name, new_file_name));
+            }
+        }
+    }
+
+    // 重命名文件夹
+    std::fs::rename(src_path, &final_path).map_err(|e| format!("重命名文件夹失败: {}", e))?;
+    log(&format!("文件夹已重命名: {} -> {}", folder_path, final_path.display()));
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
+/// 从文件名提取 part 后缀（如 "xxx.part1.rar" → "part1.rar"）
+fn extract_part_suffix(name: &str) -> Option<String> {
+    let lower = name.to_lowercase();
+    if let Some(pos) = lower.find(".part") {
+        Some(name[pos..].to_string())
+    } else {
+        None
+    }
+}

@@ -125,7 +125,9 @@ impl QueueManager {
             if let Some(over_name) = check_name_bytes_limit(&folder_target) {
                 let msg = format!("目标目录名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
                 log(&format!("文件夹被名称长度拦截: folder_name={}, bytes={}", folder_name, over_name.len()));
-                return Err(msg.into());
+                self.record_blocked_file(&file_path, &folder_name, 0, &msg, &folder_target).await;
+                warnings.push(msg);
+                return Ok(AddToQueueResult { tasks: added_tasks, warnings });
             }
             
             for file_info in files {
