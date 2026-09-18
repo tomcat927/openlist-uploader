@@ -82,6 +82,8 @@ export interface UploadConfig {
   progress_notify_enabled: boolean;
   progress_notify_interval: number;
   refresh_index_after_upload: boolean;
+  rar_path: string;
+  split_volume_mb: number;
   speed_limit: number;
   as_task: boolean;
   upload_method: string;
@@ -171,6 +173,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     progress_notify_enabled: false,
     progress_notify_interval: 30,
     refresh_index_after_upload: true,
+    rar_path: 'C:\\Program Files\\WinRAR\\rar.exe',
+    split_volume_mb: 2000,
     speed_limit: 0,
     as_task: true,
     upload_method: 'stream',

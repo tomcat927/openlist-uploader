@@ -718,3 +718,88 @@ pub async fn sync_logs(config: LogSyncConfig) -> Result<LogSyncResult, String> {
 pub async fn get_local_log_files() -> Result<Vec<LocalLogFileInfo>, String> {
     Ok(crate::services::log_sync::get_local_log_files())
 }
+
+#[tauri::command]
+pub async fn split_compress_file(
+    queue_manager: State<'_, QueueManager>,
+    file_path: String,
+) -> Result<String, String> {
+    use std::path::Path;
+
+    let config = queue_manager.config.read().await;
+    let rar_path = config.upload.rar_path.clone();
+    let volume_mb = config.upload.split_volume_mb;
+    drop(config);
+
+    log(&format!("开始分卷压缩: file_path={}, rar={}, volume={}MB", file_path, rar_path, volume_mb));
+
+    // 检查 rar.exe 是否存在
+    if !Path::new(&rar_path).exists() {
+        let msg = format!("找不到 WinRAR: {}，请在设置页配置 rar.exe 路径", rar_path);
+        log(&msg);
+        return Err(msg);
+    }
+
+    // 检查源文件是否存在
+    let src_path = Path::new(&file_path);
+    if !src_path.exists() {
+        return Err(format!("文件不存在: {}", file_path));
+    }
+
+    let file_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let file_stem = src_path
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let parent_dir = src_path.parent().ok_or("无法获取源文件父目录")?;
+
+    // 输出目录：源文件旁/完整文件名-dir/
+    let out_dir = parent_dir.join(format!("{}-dir", file_name));
+    if !out_dir.exists() {
+        std::fs::create_dir_all(&out_dir).map_err(|e| format!("创建输出目录失败: {}", e))?;
+    }
+
+    let rar_base = out_dir.join(format!("{}.rar", file_stem));
+
+    // rar a -v2000m -m1 -ep3 "输出\文件名.rar" "源文件"
+    let volume_arg = format!("-v{}m", volume_mb);
+    let output = std::process::Command::new(&rar_path)
+        .arg("a")
+        .arg(&volume_arg)
+        .arg("-m1")
+        .arg("-ep3")
+        .arg(&rar_base)
+        .arg(&file_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("执行 rar.exe 失败: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let msg = format!("rar.exe 返回错误码 {}: stderr={}, stdout={}", output.status.code().unwrap_or(-1), stderr, stdout);
+        log(&msg);
+        return Err(msg);
+    }
+
+    // 列出生成的分卷文件
+    let mut parts: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".rar") {
+                    parts.push(name.to_string());
+                }
+            }
+        }
+    }
+    parts.sort();
+
+    let out_dir_str = out_dir.to_string_lossy().to_string();
+    log(&format!("分卷压缩完成: file={}, out_dir={}, parts={:?}", file_name, out_dir_str, parts));
+    Ok(out_dir_str)
+}

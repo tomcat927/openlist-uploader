@@ -87,6 +87,7 @@ function App() {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [expandedHistoryTaskId, setExpandedHistoryTaskId] = useState<string | null>(null);
   const [expandedBlockedIndex, setExpandedBlockedIndex] = useState<number | null>(null);
+  const [compressingIndex, setCompressingIndex] = useState<number | null>(null);
   const [queueFilter, setQueueFilter] = useState<'all' | 'pending' | 'uploading'>('all');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [queueSearchText, setQueueSearchText] = useState('');
@@ -151,6 +152,31 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   const resolveBlockedFile = async (index: number) => {
     await invoke('resolve_blocked_file', { index });
     await loadBlockedFiles();
+  };
+
+  const handleSplitCompress = async (record: BlockedFileRecord, index: number) => {
+    setCompressingIndex(index);
+    try {
+      await writeClientLog(`开始分卷压缩: file=${record.file_path}, target=${record.target_path}`);
+      const outDir = await invoke<string>('split_compress_file', { filePath: record.file_path });
+      await writeClientLog(`分卷压缩完成: out_dir=${outDir}`);
+
+      // 自动加入上传队列（分卷文件夹 → 原目标路径）
+      const result = await addToFileQueue(outDir, record.target_path);
+      if (result.warnings.length > 0) {
+        window.alert(result.warnings.join('\n'));
+      }
+
+      // 标记拦截记录已处理
+      await resolveBlockedFile(index);
+      await writeClientLog(`分卷压缩并加入队列成功: file=${record.file_path}, out_dir=${outDir}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`分卷压缩失败: ${message}`);
+      await writeClientLog(`分卷压缩失败: file=${record.file_path}, error=${message}`);
+    } finally {
+      setCompressingIndex(null);
+    }
   };
 
   const clearBlockedFiles = async () => {
@@ -1408,6 +1434,16 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                       <td>
                         {!record.resolved && (
                           <button
+                            onClick={() => handleSplitCompress(record, realIndex)}
+                            className="small primary"
+                            disabled={compressingIndex === realIndex}
+                            title="自动分卷压缩并加入上传队列"
+                          >
+                            {compressingIndex === realIndex ? '压缩中...' : '分卷压缩'}
+                          </button>
+                        )}
+                        {!record.resolved && (
+                          <button
                             onClick={() => resolveBlockedFile(realIndex)}
                             className="small"
                             title="已将该文件分卷压缩并重新上传"
@@ -1789,6 +1825,33 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                   })}
                 />
                 <label htmlFor="refreshIndexAfterUpload">上传成功后刷新目录索引（OpenList 增量索引，便于搜索新文件）</label>
+              </div>
+              <div className="form-group">
+                <label>WinRAR (rar.exe) 路径:</label>
+                <input
+                  type="text"
+                  value={configForm.upload.rar_path || ''}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, rar_path: e.target.value }
+                  })}
+                  placeholder="C:\Program Files\WinRAR\rar.exe"
+                />
+                <span className="field-hint">用于被拦截的大文件分卷压缩</span>
+              </div>
+              <div className="form-group">
+                <label>分卷大小 (MB):</label>
+                <input
+                  type="number"
+                  min="100"
+                  max="10240"
+                  value={configForm.upload.split_volume_mb ?? 2000}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, split_volume_mb: parseInt(e.target.value) || 2000 }
+                  })}
+                />
+                <span className="field-hint">每卷大小，默认 2000MB（115 网盘非会员单文件限制 5GB）</span>
               </div>
               <div className="form-group checkbox-group">
                 <input

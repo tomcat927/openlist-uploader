@@ -268,12 +268,26 @@ pub struct UploadConfig {
     /// 上传成功后刷新目标目录触发 OpenList 增量索引（默认开启）
     #[serde(default = "default_true")]
     pub refresh_index_after_upload: bool,
+    /// WinRAR (rar.exe) 路径，用于大文件分卷压缩
+    #[serde(default = "default_rar_path")]
+    pub rar_path: String,
+    /// 分卷压缩每卷大小（MB，默认 2000）
+    #[serde(default = "default_volume_mb")]
+    pub split_volume_mb: u64,
     pub schedule: Option<ScheduledUpload>,
     pub notification: Option<NotificationConfig>,
 }
 
 fn default_progress_notify_interval() -> u32 {
     30
+}
+
+fn default_rar_path() -> String {
+    "C:\\Program Files\\WinRAR\\rar.exe".to_string()
+}
+
+fn default_volume_mb() -> u64 {
+    2000
 }
 
 fn default_upload_method() -> String {
@@ -322,6 +336,8 @@ impl Default for UploadConfig {
             progress_notify_enabled: false,
             progress_notify_interval: 30,
             refresh_index_after_upload: true,
+            rar_path: default_rar_path(),
+            split_volume_mb: default_volume_mb(),
             schedule: Some(ScheduledUpload::default()),
             notification: None,
         }
