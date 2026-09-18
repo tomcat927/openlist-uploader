@@ -766,22 +766,45 @@ pub async fn split_compress_file(
 
     // rar a -v2000m -m1 -ep3 "输出\文件名.rar" "源文件"
     let volume_arg = format!("-v{}m", volume_mb);
-    let output = std::process::Command::new(&rar_path)
-        .arg("a")
+
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut cmd = std::process::Command::new(&rar_path);
+    cmd.arg("a")
         .arg(&volume_arg)
         .arg("-m1")
         .arg("-ep3")
         .arg(&rar_base)
         .arg(&file_path)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
+        .stderr(std::process::piped());
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    log(&format!("执行分卷压缩: rar={} args=a {} -m1 -ep3 {} {}", rar_path, volume_arg, rar_base.display(), file_path));
+
+    let output = cmd.output()
         .map_err(|e| format!("执行 rar.exe 失败: {}", e))?;
 
+    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // 记录 rar 输出到日志
+    if !stdout_text.is_empty() {
+        log(&format!("rar stdout:\n{}", stdout_text));
+    }
+    if !stderr_text.is_empty() {
+        log(&format!("rar stderr:\n{}", stderr_text));
+    }
+
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let msg = format!("rar.exe 返回错误码 {}: stderr={}, stdout={}", output.status.code().unwrap_or(-1), stderr, stdout);
+        let msg = format!("rar.exe 返回错误码 {}: {}", output.status.code().unwrap_or(-1), stderr_text);
         log(&msg);
         return Err(msg);
     }
