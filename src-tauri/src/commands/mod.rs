@@ -782,7 +782,7 @@ pub async fn split_compress_file(
         .arg(&rar_base)
         .arg(&file_path)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::piped());
+        .stderr(std::process::Stdio::piped());
 
     #[cfg(windows)]
     {
