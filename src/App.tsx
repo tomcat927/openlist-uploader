@@ -1150,17 +1150,21 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                          </button>
                        </td>
                      </tr>
-                     {expandedTaskId === task.id && (
+                      {expandedTaskId === task.id && (
                         <tr className="task-detail-row">
-                          <td colSpan={7}>
+                          <td colSpan={8}>
                             <div className="task-path-detail">
                               <div>
                                 <span className="task-path-label">本地路径</span>
                                 <code title={task.file.path}>{task.file.path}</code>
                               </div>
                               <div>
-                                <span className="task-path-label">Alist 目标</span>
+                                <span className="task-path-label">OpenList 目标</span>
                                 <code>{task.alist_path}</code>
+                              </div>
+                              <div>
+                                <span className="task-path-label">添加时间</span>
+                                <code>{formatDateTime(task.created_at)}</code>
                               </div>
                             </div>
                           </td>
