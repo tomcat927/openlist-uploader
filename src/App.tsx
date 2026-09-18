@@ -1781,6 +1781,18 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
               <div className="form-group checkbox-group">
                 <input
                   type="checkbox"
+                  id="refreshIndexAfterUpload"
+                  checked={configForm.upload.refresh_index_after_upload ?? true}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, refresh_index_after_upload: e.target.checked }
+                  })}
+                />
+                <label htmlFor="refreshIndexAfterUpload">上传成功后刷新目录索引（OpenList 增量索引，便于搜索新文件）</label>
+              </div>
+              <div className="form-group checkbox-group">
+                <input
+                  type="checkbox"
                   id="blockDuplicateFileUpload"
                   checked={configForm.upload.block_duplicate_file_upload}
                   onChange={(e) => setConfigForm({
