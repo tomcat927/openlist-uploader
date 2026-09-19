@@ -415,6 +415,19 @@ impl UploadScheduler {
                     }
                 } else {
                     drop(config);
+
+                    // 调度器已停止（用户点停止/到点结束）时不再重试，直接标记失败入历史，
+                    // 避免任务以 Pending/100% 状态永远卡在队列里
+                    if !queue_manager.is_uploading() {
+                        log(&format!("调度器已停止，任务不再重试，标记为失败入历史: file={}", task.file.name));
+                        let last_error = format!("{}（调度器停止时中止重试）", e);
+                        task.mark_failed(last_error);
+                        queue_manager.increment_tasks_failed();
+                        let _ = queue_manager.add_to_history(task.clone()).await;
+                        let _ = queue_manager.remove_completed_from_queue(task.id.clone()).await;
+                        return;
+                    }
+
                     // 阶梯等待：检测到 IO 错误（USB 闪断等）时阶梯延迟重试，总约 10 分钟
                         let is_io_error = e.contains("os error") || e.contains("IO 错误") || e.contains("系统找不到");
                         if is_io_error {
@@ -503,8 +516,11 @@ impl UploadScheduler {
                 }
 
                 missing_checks += 1;
-                if missing_checks < 3 {
-                    log(&format!("Alist 后台上传任务已从未完成列表消失，等待目标文件出现在目录中: file={}, alist_task_id={}, check={}/3", task.file.name, alist_task_id, missing_checks));
+                // 任务从 undone 消失后，目标目录可能因 OpenList 缓存（cache_expiration）暂查不到文件，
+                // 用 refresh=true 的目录列表查询可穿透缓存，但仍需留出驱动落盘时间。
+                // 等待窗口：15 次 x 2s = 30 秒，覆盖慢速落盘场景
+                if missing_checks < 15 {
+                    log(&format!("Alist 后台上传任务已从未完成列表消失，等待目标文件出现在目录中: file={}, alist_task_id={}, check={}/15", task.file.name, alist_task_id, missing_checks));
                     continue;
                 }
 

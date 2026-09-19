@@ -4,6 +4,15 @@ use crate::services::queue_manager::QueueManager;
 use crate::services::alist_client::AlistClient;
 use crate::utils::storage::Storage;
 use crate::utils::log::log;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// 分卷压缩串行队列：同一时间只允许一个 rar.exe 进程（CPU/IO 密集，并发反而更慢）
+static SPLIT_COMPRESS_MUTEX: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
+
+fn split_compress_lock() -> Arc<Mutex<()>> {
+    SPLIT_COMPRESS_MUTEX.get_or_init(|| Arc::new(Mutex::new(()))).clone()
+}
 
 #[tauri::command]
 pub async fn get_queue(queue_manager: State<'_, QueueManager>) -> Result<Vec<UploadTask>, String> {
@@ -734,6 +743,10 @@ pub async fn split_compress_file(
     drop(config);
 
     log(&format!("开始分卷压缩: file_path={}, rar={}, volume={}MB", file_path, rar_path, volume_mb));
+
+    // 串行锁：等待其他压缩任务完成（排队执行，不并发）
+    let _lock = split_compress_lock().lock().await;
+    log(&format!("获得压缩串行锁，开始压缩: {}", file_path));
 
     // 检查 rar.exe 是否存在
     if !Path::new(&rar_path).exists() {
