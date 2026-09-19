@@ -59,14 +59,12 @@ fn redact_kv(map: &mut HashMap<String, String>, counter: &mut usize, line: &str,
         }
 
         result.push_str(&rest[..value_start]);
-        let counter_ref = counter;
         let placeholder = {
-            let c = counter_ref;
             if let Some(p) = map.get(raw_value) {
                 p.clone()
             } else {
-                *c += 1;
-                let p = format!("[N{}]", c);
+                *counter += 1;
+                let p = format!("[N{}]", counter);
                 map.insert(raw_value.to_string(), p.clone());
                 p
             }
@@ -102,14 +100,15 @@ fn redact_cjk_runs(map: &mut HashMap<String, String>, counter: &mut usize, line:
                 result.push_str(&run);
             } else if run.chars().filter(|c| is_cjk(*c)).count() >= 6 {
                 // 长中文段视为敏感内容，整体映射
-                if let Some(p) = map.get(&run) {
-                    result.push_str(p);
+                let p = if let Some(p) = map.get(&run) {
+                    p.clone()
                 } else {
                     *counter += 1;
                     let p = format!("[N{}]", counter);
-                    map.insert(run.clone(), p);
-                    result.push_str(&p);
-                }
+                    map.insert(run.clone(), p.clone());
+                    p
+                };
+                result.push_str(&p);
             } else {
                 result.push_str(&run);
             }
