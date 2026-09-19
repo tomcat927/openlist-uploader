@@ -834,6 +834,16 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     .filter(t => t.status === 'uploading')
     .reduce((sum, t) => sum + (t.speed || 0), 0);
 
+  const queueStats = useMemo(() => {
+    const total = queue.length;
+    const pending = queue.filter(t => t.status === 'pending');
+    const uploading = queue.filter(t => t.status === 'uploading');
+    const pendingBytes = pending.reduce((sum, t) => sum + (t.file.size || 0), 0);
+    const uploadingBytes = uploading.reduce((sum, t) => sum + (t.file.size || 0), 0);
+    const allBytes = queue.reduce((sum, t) => sum + (t.file.size || 0), 0);
+    return { total, pending: pending.length, uploading: uploading.length, pendingBytes, uploadingBytes, allBytes };
+  }, [queue]);
+
   const historyStats = useMemo(() => {
     const total = historyPage?.total ?? history.length;
     const completed = history.filter(t => t.status === 'completed');
@@ -1074,6 +1084,30 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
               {isStopping && (
                 <div className="stopping-notice">
                   等待当前文件上传完成后停止...
+                </div>
+              )}
+              {queueStats.total > 0 && (
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <span className="stat-value">{queueStats.total}</span>
+                    <span className="stat-label">总任务数</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-value">{queueStats.pending}</span>
+                    <span className="stat-label">等待中</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-value">{queueStats.uploading}</span>
+                    <span className="stat-label">上传中</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-value">{formatFileSize(queueStats.allBytes)}</span>
+                    <span className="stat-label">队列总大小</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-value">{formatFileSize(queueStats.pendingBytes)}</span>
+                    <span className="stat-label">待上传大小</span>
+                  </div>
                 </div>
               )}
             </div>
