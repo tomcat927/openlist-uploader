@@ -859,10 +859,18 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     });
     const monthBytes = thisMonth.reduce((sum, t) => sum + (t.file.size || 0), 0);
 
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayCompleted = completed.filter(t => {
+      if (!t.end_time) return false;
+      return new Date(t.end_time) >= todayStart;
+    });
+    const todayCount = todayCompleted.length;
+    const todayBytes = todayCompleted.reduce((sum, t) => sum + (t.file.size || 0), 0);
+
     const totalDuration = completed.reduce((sum, t) => sum + (t.duration || 0), 0);
     const avgSpeed = totalDuration > 0 ? totalBytes / totalDuration : 0;
 
-    return { total, completed: completed.length, failed: failed.length, successRate, totalBytes, monthBytes, avgSpeed };
+    return { total, completed: completed.length, failed: failed.length, successRate, totalBytes, monthBytes, todayCount, todayBytes, avgSpeed };
   }, [history, historyPage]);
 
   const formatDateTime = (isoString?: string) => {
@@ -1283,6 +1291,14 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
 
             {historyPage && historyPage.total > 0 && (
               <div className="history-stats">
+                <div className="stat-card">
+                  <span className="stat-value">{historyStats.todayCount}</span>
+                  <span className="stat-label">今日上传数</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-value">{formatFileSize(historyStats.todayBytes)}</span>
+                  <span className="stat-label">今日上传量</span>
+                </div>
                 <div className="stat-card">
                   <span className="stat-value">{historyStats.total}</span>
                   <span className="stat-label">总上传数</span>
