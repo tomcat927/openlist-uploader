@@ -315,9 +315,15 @@ async fn sync_logs_with_client(client: &LogSyncClient, config: &LogSyncConfig) -
     let mut details = Vec::new();
 
     let target_path = config.target_path.trim_end_matches('/').to_string();
+    // 脱敏版目录：原文目录名 + "-redacted" 后缀
+    let redacted_target_path = format!("{}-redacted", target_path);
 
     if let Err(e) = client.ensure_dir(&target_path).await {
         details.push(format!("创建目录失败: {}", e));
+        return LogSyncResult { total: 0, success: 0, failed: 0, details, last_sync_at: load_last_sync_at() };
+    }
+    if let Err(e) = client.ensure_dir(&redacted_target_path).await {
+        details.push(format!("创建脱敏目录失败: {}", e));
         return LogSyncResult { total: 0, success: 0, failed: 0, details, last_sync_at: load_last_sync_at() };
     }
 
@@ -328,24 +334,46 @@ async fn sync_logs_with_client(client: &LogSyncClient, config: &LogSyncConfig) -
         return LogSyncResult { total: 0, success: 0, failed: 0, details, last_sync_at: load_last_sync_at() };
     }
 
+    // 生成脱敏版临时目录（本机临时目录，上传后由系统清理）
+    let redacted_tmp_dir = std::env::temp_dir().join("openlist-uploader-redacted-logs");
+
     let mut success = 0usize;
     let mut failed = 0usize;
 
     for (path, name, _size, _modified) in &local_files {
-        let file_target = if target_path.ends_with('/') {
-            format!("{}{}", target_path, name)
-        } else {
-            format!("{}/{}", target_path, name)
-        };
+        // 1. 上传原文版
+        let file_target = format!("{}/{}", target_path, name);
+        let mut file_ok = true;
 
         match client.upload_file(path, &file_target).await {
-            Ok(()) => {
-                success += 1;
-                details.push(format!("✓ {}", name));
-            }
+            Ok(()) => {}
             Err(e) => {
+                file_ok = false;
                 failed += 1;
                 details.push(format!("✗ {}: {}", name, e));
+            }
+        }
+
+        // 2. 生成并上传脱敏版
+        if file_ok {
+            match crate::services::log_redact::generate_redacted_log(path, &redacted_tmp_dir) {
+                Some(redacted_path) => {
+                    let redacted_target = format!("{}/{}", redacted_target_path, name);
+                    match client.upload_file(&redacted_path, &redacted_target).await {
+                        Ok(()) => {
+                            success += 1;
+                            details.push(format!("✓ {}（原文+脱敏）", name));
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            details.push(format!("✗ 脱敏版 {}: {}", name, e));
+                        }
+                    }
+                }
+                None => {
+                    failed += 1;
+                    details.push(format!("✗ 生成脱敏版失败: {}", name));
+                }
             }
         }
     }
