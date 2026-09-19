@@ -745,7 +745,8 @@ pub async fn split_compress_file(
     log(&format!("开始分卷压缩: file_path={}, rar={}, volume={}MB", file_path, rar_path, volume_mb));
 
     // 串行锁：等待其他压缩任务完成（排队执行，不并发）
-    let _lock = split_compress_lock().lock().await;
+    let lock_arc = split_compress_lock();
+    let _lock = lock_arc.lock().await;
     log(&format!("获得压缩串行锁，开始压缩: {}", file_path));
 
     // 检查 rar.exe 是否存在
