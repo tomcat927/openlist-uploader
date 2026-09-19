@@ -156,6 +156,65 @@ pub fn run() {
                 append_log("startup.log", "schedule monitor stopped");
             });
 
+            // 开机自启自检：config 勾选了自启动，但注册表项缺失或路径与当前 exe 不符时自动修正
+            // （改名/移动安装目录后旧注册表路径失效，导致重启后不自启）
+            {
+                let qm_for_autostart = qm_for_setup.clone_inner();
+                let auto_start_on_boot = {
+                    let config = qm_for_autostart.config.blocking_read();
+                    config.upload.auto_start_on_boot
+                };
+                if auto_start_on_boot {
+                    use tauri_plugin_autostart::ManagerExt;
+                    let autostart_manager = app.autolaunch();
+                    let is_enabled = autostart_manager.is_enabled().unwrap_or(false);
+
+                    // 读注册表当前指向的路径（plugin 写入的 Run 键值名为 productName）
+                    let reg_value = {
+                        let output = std::process::Command::new("reg")
+                            .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "openlist-uploader"])
+                            .output();
+                        match output {
+                            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+                            Err(_) => String::new(),
+                        }
+                    };
+
+                    let current_exe = std::env::current_exe()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+
+                    let extract_path = |s: &str| -> String {
+                        s.lines()
+                            .find(|l| l.contains("REG_SZ"))
+                            .and_then(|l| l.split("REG_SZ").nth(1))
+                            .map(|p| p.trim().trim_matches('"').to_string())
+                            .unwrap_or_default()
+                    };
+                    let reg_path = extract_path(&reg_value);
+
+                    let path_match = !reg_path.is_empty()
+                        && reg_path.eq_ignore_ascii_case(&current_exe);
+
+                    if is_enabled && path_match {
+                        append_log("startup.log", &format!("自启自检: 注册表路径正常 ({})", reg_path));
+                    } else {
+                        append_log("startup.log", &format!("自启自检: 需要修正 (is_enabled={}, reg='{}', exe='{}')", is_enabled, reg_path, current_exe));
+                        crate::utils::log::log(&format!("自启修正: is_enabled={}, reg={}, exe={}", is_enabled, reg_path, current_exe));
+                        if is_enabled {
+                            let _ = autostart_manager.disable();
+                        }
+                        if let Err(e) = autostart_manager.enable() {
+                            append_log("startup.log", &format!("自启修正失败: {}", e));
+                            crate::utils::log::log(&format!("自启修正失败: {}", e));
+                        } else {
+                            append_log("startup.log", "自启自检: 已补写注册表路径");
+                            crate::utils::log::log("自启修正完成");
+                        }
+                    }
+                }
+            }
+
             // 如果配置了 Alist 可执行文件路径，启动时自动启动 Alist
             let qm = app.state::<crate::services::queue_manager::QueueManager>();
             let config = qm.config.blocking_read();

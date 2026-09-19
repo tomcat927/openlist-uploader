@@ -650,18 +650,22 @@ pub async fn set_autostart(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
+    use tauri_plugin_autostart::ManagerExt;
 
     let autostart_manager = app.autolaunch();
-    
+
     if enabled {
-        if !autostart_manager.is_enabled().unwrap_or(false) {
-            autostart_manager.enable().map_err(|e| {
-                log(&format!("开启开机自启失败: {}", e));
-                e.to_string()
-            })?;
-            log("开机自启已开启");
+        // 强制刷新：先 disable 再 enable，确保注册表路径与当前 exe 一致
+        // （改名升级后旧路径残留会导致自启动静默失败）
+        let was_enabled = autostart_manager.is_enabled().unwrap_or(false);
+        if was_enabled {
+            let _ = autostart_manager.disable();
         }
+        autostart_manager.enable().map_err(|e| {
+            log(&format!("开启开机自启失败: {}", e));
+            e.to_string()
+        })?;
+        log(&format!("开机自启已开启（was_enabled={}，注册表路径已刷新）", was_enabled));
     } else {
         if autostart_manager.is_enabled().unwrap_or(false) {
             autostart_manager.disable().map_err(|e| {
