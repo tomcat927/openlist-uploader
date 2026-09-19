@@ -248,8 +248,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     const unlistenCompress = listen<number>('compress_progress', (event) => {
       setCompressProgress(event.payload);
     });
-    return () => { unlistenCompress.then(fn => fn()); };
-    
+
     // 监听文件拖拽事件
     let unlistenFn: (() => void) | null = null;
 
@@ -303,6 +302,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
 
     return () => {
       stopHealthCheck();
+      unlistenCompress.then(fn => fn());
       if (unlistenFn) {
         unlistenFn();
       }
@@ -1087,7 +1087,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 </div>
               )}
               {queueStats.total > 0 && (
-                <div className="stats-grid">
+                <div className="history-stats">
                   <div className="stat-card">
                     <span className="stat-value">{queueStats.total}</span>
                     <span className="stat-label">总任务数</span>
