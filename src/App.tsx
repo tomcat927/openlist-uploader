@@ -2322,7 +2322,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         ...configForm,
                         log_sync: { ...configForm.log_sync!, base_url: e.target.value }
                       })}
-                      placeholder="http://119.91.136.173:5245"
+                      placeholder="http://your-remote-openlist:5245"
                     />
                   </div>
                   <div className="form-group">
