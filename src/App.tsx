@@ -13,6 +13,19 @@ import './App.css';
 
 const FOUR_GB = 4 * 1024 * 1024 * 1024;
 
+type CompressOpKind = 'compress' | 'rename';
+
+interface CompressState {
+  kind: CompressOpKind;
+  phase: 'queued' | 'running';
+  percent: number;
+}
+
+interface CompressEventPayload {
+  file_path: string;
+  percent: number;
+}
+
 function App() {
   const {
     queue,
@@ -88,8 +101,7 @@ function App() {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [expandedHistoryTaskId, setExpandedHistoryTaskId] = useState<string | null>(null);
   const [expandedBlockedIndex, setExpandedBlockedIndex] = useState<number | null>(null);
-  const [compressingIndex, setCompressingIndex] = useState<number | null>(null);
-  const [compressProgress, setCompressProgress] = useState(0);
+  const [compressStates, setCompressStates] = useState<Record<string, CompressState>>({});
   const [queueFilter, setQueueFilter] = useState<'all' | 'pending' | 'uploading'>('all');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [queueSearchText, setQueueSearchText] = useState('');
@@ -120,6 +132,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   const savePathTimerRef = useRef<number | null>(null);
   const speedLimitSaveTimerRef = useRef<number | null>(null);
   const notifiedTaskIds = useRef<Set<string>>(new Set());
+  const compressInFlightRef = useRef<Set<string>>(new Set());
 
   const normalizeAlistPath = (path: string) => {
     const trimmed = path.trim();
@@ -156,9 +169,25 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     await loadBlockedFiles();
   };
 
+  const setRecordBusy = (path: string, state: CompressState) => {
+    setCompressStates(prev => ({ ...prev, [path]: state }));
+  };
+
+  const clearRecordBusy = (path: string) => {
+    setCompressStates(prev => {
+      if (!(path in prev)) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+  };
+
   const handleSplitCompress = async (record: BlockedFileRecord, index: number) => {
-    setCompressingIndex(index);
-    setCompressProgress(0);
+    const pathKey = record.file_path;
+    // in-flight 守卫：同一文件路径同时只允许一个压缩操作，防双击/重复触发
+    if (compressInFlightRef.current.has(pathKey)) return;
+    compressInFlightRef.current.add(pathKey);
+    setRecordBusy(pathKey, { kind: 'compress', phase: 'queued', percent: 0 });
     try {
       await writeClientLog(`开始分卷压缩: file=${record.file_path}, target=${record.target_path}`);
       const outDir = await invoke<string>('split_compress_file', { filePath: record.file_path });
@@ -178,12 +207,16 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       window.alert(`分卷压缩失败: ${message}`);
       await writeClientLog(`分卷压缩失败: file=${record.file_path}, error=${message}`);
     } finally {
-      setCompressingIndex(null);
+      compressInFlightRef.current.delete(pathKey);
+      clearRecordBusy(pathKey);
     }
   };
 
   const handleRenameAndUpload = async (record: BlockedFileRecord, index: number) => {
-    setCompressingIndex(index);
+    const pathKey = record.file_path;
+    if (compressInFlightRef.current.has(pathKey)) return;
+    compressInFlightRef.current.add(pathKey);
+    setRecordBusy(pathKey, { kind: 'rename', phase: 'running', percent: 0 });
     try {
       await writeClientLog(`开始改名重传: file=${record.file_path}, target=${record.target_path}`);
       const newPath = await invoke<string>('rename_blocked_folder', { folderPath: record.file_path });
@@ -203,7 +236,8 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       window.alert(`改名重传失败: ${message}`);
       await writeClientLog(`改名重传失败: file=${record.file_path}, error=${message}`);
     } finally {
-      setCompressingIndex(null);
+      compressInFlightRef.current.delete(pathKey);
+      clearRecordBusy(pathKey);
     }
   };
 
@@ -244,9 +278,22 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     // 启动心跳检测
     startHealthCheck();
 
-    // 监听压缩进度事件
-    const unlistenCompress = listen<number>('compress_progress', (event) => {
-      setCompressProgress(event.payload);
+    // 监听压缩开始事件（拿到串行锁，"排队中" → "压缩中"）
+    const unlistenCompressStart = listen<CompressEventPayload>('compress_started', (event) => {
+      setCompressStates(prev => {
+        const cur = prev[event.payload.file_path];
+        if (!cur || cur.kind !== 'compress') return prev;
+        return { ...prev, [event.payload.file_path]: { ...cur, phase: 'running', percent: event.payload.percent } };
+      });
+    });
+
+    // 监听压缩进度事件（事件带 file_path，分发到对应记录）
+    const unlistenCompress = listen<CompressEventPayload>('compress_progress', (event) => {
+      setCompressStates(prev => {
+        const cur = prev[event.payload.file_path];
+        if (!cur || cur.kind !== 'compress') return prev;
+        return { ...prev, [event.payload.file_path]: { ...cur, phase: 'running', percent: event.payload.percent } };
+      });
     });
 
     // 监听文件拖拽事件
@@ -303,6 +350,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     return () => {
       stopHealthCheck();
       unlistenCompress.then(fn => fn());
+      unlistenCompressStart.then(fn => fn());
       if (unlistenFn) {
         unlistenFn();
       }
@@ -1520,24 +1568,26 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         )}
                       </td>
                       <td>
-                        {!record.resolved && (
+                        {!record.resolved && !record.file_path.endsWith('-dir') && (
                           <button
                             onClick={() => handleSplitCompress(record, realIndex)}
                             className="small primary"
-                            disabled={compressingIndex === realIndex}
+                            disabled={!!compressStates[record.file_path]}
                             title="自动分卷压缩并加入上传队列"
                           >
-                            {compressingIndex === realIndex ? `压缩中 ${compressProgress}%` : '分卷压缩'}
+                            {compressStates[record.file_path]?.kind === 'compress'
+                              ? (compressStates[record.file_path].phase === 'queued' ? '排队中...' : `压缩中 ${compressStates[record.file_path].percent}%`)
+                              : '分卷压缩'}
                           </button>
                         )}
                         {!record.resolved && record.file_path.endsWith('-dir') && (
                           <button
                             onClick={() => handleRenameAndUpload(record, realIndex)}
                             className="small primary"
-                            disabled={compressingIndex === realIndex}
+                            disabled={!!compressStates[record.file_path]}
                             title="自动截断文件夹名和分卷文件名，创建存根后加入上传队列"
                           >
-                            {compressingIndex === realIndex ? '处理中...' : '改名重传'}
+                            {compressStates[record.file_path]?.kind === 'rename' ? '处理中...' : '改名重传'}
                           </button>
                         )}
                         {!record.resolved && (
