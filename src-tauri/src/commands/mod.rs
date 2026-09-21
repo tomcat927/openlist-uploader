@@ -1088,7 +1088,7 @@ fn parse_rar_progress(line: &str) -> Option<u8> {
 
 /// GBK 解码字节数组为字符串（rar.exe 在中文 Windows 输出 GBK 编码）
 fn decode_gbk(bytes: &[u8]) -> String {
-    encoding_rs::GBK.decode(bytes).0
+    encoding_rs::GBK.decode(bytes).0.into_owned()
 }
 
 /// 将字节数组转为 hex 字符串，便于离线分析编码问题
