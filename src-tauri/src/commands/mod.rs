@@ -899,7 +899,7 @@ pub async fn split_compress_file(
     {
         let mut sbuf = Vec::new();
         std::io::Read::read_to_end(&mut stderr, &mut sbuf).ok();
-        stderr_bytes.extend_from_slice(sbuf);
+        stderr_bytes.extend(&sbuf);
     }
 
     let status = child.wait()
