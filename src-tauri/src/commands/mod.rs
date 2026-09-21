@@ -786,6 +786,31 @@ pub async fn split_compress_file(
 
     // 输出目录：源文件旁/完整文件名-dir/
     let out_dir = parent_dir.join(format!("{}-dir", file_name));
+
+    // 检测输出目录是否已有 .rar 分卷文件——若有，说明该文件此前已分卷压缩过，
+    // 再次 rar a 会向同一目录写入，导致分卷损坏/产物异常累积（如6GB源文件压出9GB）。
+    // 拒绝重复压缩，要求用户先清理旧产物或使用"改名重传"。
+    if out_dir.exists() {
+        let existing_parts: Vec<String> = std::fs::read_dir(&out_dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+                    .filter(|name| name.ends_with(".rar"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !existing_parts.is_empty() {
+            let msg = format!(
+                "输出目录已存在 {} 个 .rar 分卷文件，疑似此前压缩产物：\n{}\n请先删除该目录或对拦截记录使用"改名重传"，不要重复分卷压缩。",
+                existing_parts.len(),
+                existing_parts.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
+            );
+            log(&msg);
+            return Err(msg);
+        }
+    }
+
     if !out_dir.exists() {
         std::fs::create_dir_all(&out_dir).map_err(|e| format!("创建输出目录失败: {}", e))?;
     }
