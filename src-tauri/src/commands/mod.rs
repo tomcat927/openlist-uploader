@@ -817,30 +817,44 @@ pub async fn split_compress_file(
 
     log(&format!("执行分卷压缩: rar={} args=a {} -m1 -ep3 {} {}", rar_path, volume_arg, rar_base.display(), file_path));
 
+    // 压缩前诊断：rar.exe 元信息、rarreg.key 是否存在、输出目录是否已存在、源文件大小
+    {
+        let rar_meta = std::fs::metadata(&rar_path);
+        let rarreg = std::path::Path::new(&rar_path).with_file_name("rarreg.key");
+        let src_meta = std::fs::metadata(&file_path);
+        log(&format!(
+            "压缩前诊断: rar_exists={}, rar_size={:?}, rar_modified={:?}, rarreg_exists={}, out_dir_exists={}, src_exists={}, src_size={:?}",
+            rar_meta.is_ok(),
+            rar_meta.as_ref().ok().map(|m| m.len()),
+            rar_meta.as_ref().ok().and_then(|m| m.modified().ok()),
+            std::path::Path::new(&rarreg).exists(),
+            out_dir.exists(),
+            src_meta.is_ok(),
+            src_meta.as_ref().ok().map(|m| m.len()),
+        ));
+    }
+
     let mut child = cmd.spawn()
         .map_err(|e| format!("启动 rar.exe 失败: {}", e))?;
 
-    // 逐字符读取 stdout，解析百分比
+    // 逐字符读取 stdout，解析百分比（保留原始字节用于 GBK 解码，避免 from_utf8_lossy 丢失中文）
     let mut stdout = child.stdout.take().ok_or("无法获取 rar stdout")?;
     let mut stderr = child.stderr.take().ok_or("无法获取 rar stderr")?;
-    let mut stdout_text = String::new();
-    let mut stderr_text = String::new();
-
-    // 读 stdout 简单方案：逐块读取，用 \r 分割取最后一段解析百分比
-    let mut buf = [0u8; 4096];
+    let mut stdout_bytes: Vec<u8> = Vec::new();
+    let mut stderr_bytes: Vec<u8> = Vec::new();
     let mut line_buf = String::new();
+    let mut buf = [0u8; 4096];
     loop {
         match stdout.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
+                stdout_bytes.extend_from_slice(&buf[..n]);
                 let chunk = String::from_utf8_lossy(&buf[..n]);
-                stdout_text.push_str(&chunk);
                 line_buf.push_str(&chunk);
                 // rar 用 \r 刷新进度，按 \r 和 \n 分割
                 while let Some(pos) = line_buf.find(|c| c == '\r' || c == '\n') {
                     let line = line_buf[..pos].trim().to_string();
                     if !line.is_empty() {
-                        // 解析末尾百分比
                         if let Some(pct) = parse_rar_progress(&line) {
                             let _ = app.emit("compress_progress", CompressEvent { file_path: file_path.clone(), percent: pct });
                             log(&format!("压缩进度: {}%", pct));
@@ -856,8 +870,12 @@ pub async fn split_compress_file(
         }
     }
 
-    // 读 stderr
-    stderr.read_to_string(&mut stderr_text).ok();
+    // 读 stderr 原始字节
+    {
+        let mut sbuf = Vec::new();
+        std::io::Read::read_to_end(&mut stderr, &mut sbuf).ok();
+        stderr_bytes.extend_from_slice(sbuf);
+    }
 
     let status = child.wait()
         .map_err(|e| format!("等待 rar.exe 结束失败: {}", e))?;
@@ -865,15 +883,28 @@ pub async fn split_compress_file(
     // 最终进度 100%
     let _ = app.emit("compress_progress", CompressEvent { file_path: file_path.clone(), percent: 100 });
 
-    if !stdout_text.is_empty() {
-        log(&format!("rar stdout:\n{}", stdout_text));
+    // GBK 解码 rar 输出（rar.exe 在中文 Windows 输出 GBK 编码）
+    let stdout_gbk = String::from_utf8(stdout_bytes.clone()).unwrap_or_else(|_| {
+        // 不是合法 UTF-8，尝试 GBK 解码
+        decode_gbk(&stdout_bytes)
+    });
+    let stderr_gbk = String::from_utf8(stderr_bytes.clone()).unwrap_or_else(|_| {
+        decode_gbk(&stderr_bytes)
+    });
+
+    if !stdout_gbk.is_empty() {
+        log(&format!("rar stdout (GBK):\n{}", stdout_gbk));
     }
-    if !stderr_text.is_empty() {
-        log(&format!("rar stderr:\n{}", stderr_text));
+    if !stderr_gbk.is_empty() {
+        log(&format!("rar stderr (GBK):\n{}", stderr_gbk));
     }
 
     if !status.success() {
-        let msg = format!("rar.exe 返回错误码 {}: {}", status.code().unwrap_or(-1), stderr_text);
+        let code = status.code().unwrap_or(-1);
+        // 失败时额外输出 hex 转储，便于离线分析编码问题
+        log(&format!("rar stdout hex: {}", hex_dump(&stdout_bytes)));
+        log(&format!("rar stderr hex: {}", hex_dump(&stderr_bytes)));
+        let msg = format!("rar.exe 返回错误码 {}: {}", code, stderr_gbk);
         log(&msg);
         return Err(msg);
     }
@@ -1028,4 +1059,26 @@ fn parse_rar_progress(line: &str) -> Option<u8> {
         }
     }
     None
+}
+
+/// GBK 解码字节数组为字符串（rar.exe 在中文 Windows 输出 GBK 编码）
+fn decode_gbk(bytes: &[u8]) -> String {
+    encoding_rs::GBK.decode(bytes).0
+}
+
+/// 将字节数组转为 hex 字符串，便于离线分析编码问题
+fn hex_dump(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    // 限制长度，避免日志过大
+    if s.len() > 4096 {
+        format!("{}...(truncated, total={}B)", &s[..4096], bytes.len())
+    } else {
+        s
+    }
 }
