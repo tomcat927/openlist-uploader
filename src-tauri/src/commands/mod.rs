@@ -10,6 +10,13 @@ use tokio::sync::Mutex;
 /// 分卷压缩串行队列：同一时间只允许一个 rar.exe 进程（CPU/IO 密集，并发反而更慢）
 static SPLIT_COMPRESS_MUTEX: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
 
+/// 压缩事件载荷：带文件路径标识，前端按记录分别显示进度
+#[derive(Clone, serde::Serialize)]
+struct CompressEvent {
+    file_path: String,
+    percent: u8,
+}
+
 fn split_compress_lock() -> Arc<Mutex<()>> {
     SPLIT_COMPRESS_MUTEX.get_or_init(|| Arc::new(Mutex::new(()))).clone()
 }
@@ -752,6 +759,7 @@ pub async fn split_compress_file(
     let lock_arc = split_compress_lock();
     let _lock = lock_arc.lock().await;
     log(&format!("获得压缩串行锁，开始压缩: {}", file_path));
+    let _ = app.emit("compress_started", CompressEvent { file_path: file_path.clone(), percent: 0 });
 
     // 检查 rar.exe 是否存在
     if !Path::new(&rar_path).exists() {
@@ -834,7 +842,7 @@ pub async fn split_compress_file(
                     if !line.is_empty() {
                         // 解析末尾百分比
                         if let Some(pct) = parse_rar_progress(&line) {
-                            let _ = app.emit("compress_progress", pct);
+                            let _ = app.emit("compress_progress", CompressEvent { file_path: file_path.clone(), percent: pct });
                             log(&format!("压缩进度: {}%", pct));
                         }
                     }
@@ -855,7 +863,7 @@ pub async fn split_compress_file(
         .map_err(|e| format!("等待 rar.exe 结束失败: {}", e))?;
 
     // 最终进度 100%
-    let _ = app.emit("compress_progress", 100);
+    let _ = app.emit("compress_progress", CompressEvent { file_path: file_path.clone(), percent: 100 });
 
     if !stdout_text.is_empty() {
         log(&format!("rar stdout:\n{}", stdout_text));
