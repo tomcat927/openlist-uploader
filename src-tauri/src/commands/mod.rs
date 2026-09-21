@@ -802,7 +802,7 @@ pub async fn split_compress_file(
             .unwrap_or_default();
         if !existing_parts.is_empty() {
             let msg = format!(
-                "输出目录已存在 {} 个 .rar 分卷文件，疑似此前压缩产物：\n{}\n请先删除该目录或对拦截记录使用"改名重传"，不要重复分卷压缩。",
+                "输出目录已存在 {} 个 .rar 分卷文件，疑似此前压缩产物:\n{}\n请先删除该目录或对拦截记录使用改名重传，不要重复分卷压缩。",
                 existing_parts.len(),
                 existing_parts.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
             );
