@@ -849,7 +849,8 @@ pub async fn split_compress_file(
 
     let rar_base = out_dir.join(format!("{}.rar", file_stem));
 
-    // rar a -v2000m -m1 -ep3 "输出\文件名.rar" "源文件"
+    // rar a -v2000m -m1 -ep "输出\文件名.rar" "源文件"
+    // -ep: 排除所有路径，压缩包内只保留文件名，解压后直接是文件不带目录层级
     let volume_arg = format!("-v{}m", volume_mb);
 
     #[cfg(windows)]
@@ -861,7 +862,7 @@ pub async fn split_compress_file(
     cmd.arg("a")
         .arg(&volume_arg)
         .arg("-m1")
-        .arg("-ep3")
+        .arg("-ep")
         .arg(&rar_base)
         .arg(&file_path)
         .stdout(std::process::Stdio::piped())
@@ -872,7 +873,7 @@ pub async fn split_compress_file(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    log(&format!("执行分卷压缩: rar={} args=a {} -m1 -ep3 {} {}", rar_path, volume_arg, rar_base.display(), file_path));
+    log(&format!("执行分卷压缩: rar={} args=a {} -m1 -ep {} {}", rar_path, volume_arg, rar_base.display(), file_path));
 
     // 压缩前诊断：rar.exe 元信息、rarreg.key 是否存在、输出目录是否已存在、源文件大小
     {
