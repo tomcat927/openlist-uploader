@@ -105,6 +105,8 @@ function App() {
   const [queueFilter, setQueueFilter] = useState<'all' | 'pending' | 'uploading'>('all');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [queueSearchText, setQueueSearchText] = useState('');
+  const [queueCurrentPage, setQueueCurrentPage] = useState(1);
+  const [queuePageSize] = useState(50);
   const [blockedSearchText, setBlockedSearchText] = useState('');
   const [blockedSortOrder, setBlockedSortOrder] = useState<'desc' | 'asc'>('desc');
   const [saveConfigStatus, setSaveConfigStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
@@ -967,6 +969,17 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     return result;
   }, [queue, queueFilter, queueSearchText]);
 
+  // 过滤条件变化时重置到第一页
+  useEffect(() => {
+    setQueueCurrentPage(1);
+  }, [queueFilter, queueSearchText, queue.length]);
+
+  const queueTotalPages = Math.max(1, Math.ceil(filteredQueue.length / queuePageSize));
+  const pagedQueue = useMemo(() => {
+    const start = (queueCurrentPage - 1) * queuePageSize;
+    return filteredQueue.slice(start, start + queuePageSize);
+  }, [filteredQueue, queueCurrentPage, queuePageSize]);
+
   const filteredBlockedFiles = useMemo(() => {
     let result = [...blockedFiles];
     if (blockedSearchText.trim()) {
@@ -1222,7 +1235,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredQueue.map(task => (
+                    {pagedQueue.map(task => (
                       <Fragment key={task.id}>
                       <tr>
                         <td><input type="checkbox" checked={selectedTaskIds.has(task.id)} onChange={() => toggleSelect(task.id)} /></td>
@@ -1304,9 +1317,30 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                       </Fragment>
                     ))}
                   </tbody>
-                </table>
-              )}
-            </div>
+                 </table>
+               )}
+               {queueTotalPages > 1 && (
+                 <div className="history-pagination">
+                   <button
+                     type="button"
+                     disabled={queueCurrentPage <= 1}
+                     onClick={() => setQueueCurrentPage(p => Math.max(1, p - 1))}
+                   >
+                     上一页
+                   </button>
+                   <span className="pagination-info">
+                     第 {queueCurrentPage} / {queueTotalPages} 页（共 {filteredQueue.length} 条）
+                   </span>
+                   <button
+                     type="button"
+                     disabled={queueCurrentPage >= queueTotalPages}
+                     onClick={() => setQueueCurrentPage(p => Math.min(queueTotalPages, p + 1))}
+                   >
+                     下一页
+                   </button>
+                 </div>
+               )}
+             </div>
           </div>
         )}
 
