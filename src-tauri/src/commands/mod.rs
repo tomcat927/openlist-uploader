@@ -739,6 +739,37 @@ pub async fn get_local_log_files() -> Result<Vec<LocalLogFileInfo>, String> {
     Ok(crate::services::log_sync::get_local_log_files())
 }
 
+/// 清理分卷压缩输出目录（<file_name>-dir/），删除整个目录及其内容。
+/// 用于检测到旧产物后一键清理，以便重新压缩。
+#[tauri::command]
+pub async fn clean_split_compress_output(file_path: String) -> Result<String, String> {
+    use std::path::Path;
+
+    let src_path = Path::new(&file_path);
+    let file_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let parent_dir = src_path.parent().ok_or("无法获取源文件父目录")?;
+    let out_dir = parent_dir.join(format!("{}-dir", file_name));
+
+    if !out_dir.exists() {
+        return Ok(format!("输出目录不存在，无需清理: {}", out_dir.display()));
+    }
+
+    // 列出即将删除的 .rar 文件数
+    let part_count = std::fs::read_dir(&out_dir)
+        .map(|entries| entries.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".rar")).count())
+        .unwrap_or(0);
+
+    std::fs::remove_dir_all(&out_dir)
+        .map_err(|e| format!("删除输出目录失败: {}, error={}", out_dir.display(), e))?;
+
+    let msg = format!("已清理分卷压缩输出目录: {} (删除 {} 个 .rar 文件)", out_dir.display(), part_count);
+    log(&msg);
+    Ok(msg)
+}
+
 #[tauri::command]
 pub async fn split_compress_file(
     app: tauri::AppHandle,

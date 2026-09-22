@@ -204,6 +204,36 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       await writeClientLog(`分卷压缩并加入队列成功: file=${record.file_path}, out_dir=${outDir}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // 检测到已有分卷产物 → 弹窗一键清理后自动重新压缩
+      if (message.includes('输出目录已存在')) {
+        const confirmed = await ask(
+          '检测到该文件已有分卷压缩产物（可能因之前重复点击导致损坏）。\n是否自动清理旧产物并重新压缩？',
+          { title: '检测到旧分卷产物', kind: 'warning' }
+        );
+        if (confirmed) {
+          await writeClientLog(`用户确认清理旧分卷产物: file=${record.file_path}`);
+          try {
+            const cleanMsg = await invoke<string>('clean_split_compress_output', { filePath: record.file_path });
+            await writeClientLog(`清理完成: ${cleanMsg}`);
+            // 重新压缩（复用 handler，但不经过 in-flight 守卫因为 ref 里已有当前 pathKey）
+            setRecordBusy(pathKey, { kind: 'compress', phase: 'queued', percent: 0 });
+            const outDir2 = await invoke<string>('split_compress_file', { filePath: record.file_path });
+            await writeClientLog(`分卷压缩完成: out_dir=${outDir2}`);
+            const result2 = await addToFileQueue(outDir2, record.target_path);
+            if (result2.warnings.length > 0) {
+              window.alert(result2.warnings.join('\n'));
+            }
+            await resolveBlockedFile(index);
+            await writeClientLog(`分卷压缩并加入队列成功: file=${record.file_path}, out_dir=${outDir2}`);
+            return;
+          } catch (retryError) {
+            const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+            window.alert(`清理后重新压缩失败: ${retryMsg}`);
+            await writeClientLog(`清理后重新压缩失败: file=${record.file_path}, error=${retryMsg}`);
+            return;
+          }
+        }
+      }
       window.alert(`分卷压缩失败: ${message}`);
       await writeClientLog(`分卷压缩失败: file=${record.file_path}, error=${message}`);
     } finally {

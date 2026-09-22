@@ -526,6 +526,7 @@ pub fn run() {
             crate::commands::alist_list_dir,
             crate::commands::alist_mkdir,
             crate::commands::split_compress_file,
+            crate::commands::clean_split_compress_output,
             crate::commands::rename_blocked_folder,
            crate::commands::get_blocked_files,
            crate::commands::remove_blocked_file,
