@@ -782,6 +782,7 @@ pub async fn split_compress_file(
     let config = queue_manager.config.read().await;
     let rar_path = config.upload.rar_path.clone();
     let volume_mb = config.upload.split_volume_mb;
+    let delete_source = config.upload.delete_source_after_compress;
     drop(config);
 
     log(&format!("开始分卷压缩: file_path={}, rar={}, volume={}MB", file_path, rar_path, volume_mb));
@@ -981,10 +982,12 @@ pub async fn split_compress_file(
     let out_dir_str = out_dir.to_string_lossy().to_string();
     log(&format!("分卷压缩完成: file={}, out_dir={}, parts={:?}", file_name, out_dir_str, parts));
 
-    // 压缩成功后删除原文件
-    match std::fs::remove_file(&file_path) {
-        Ok(_) => log(&format!("分卷压缩后已删除原文件: {}", file_path)),
-        Err(e) => log(&format!("分卷压缩后删除原文件失败: {}, error={}", file_path, e)),
+    // 压缩成功后删除原文件（受设置开关控制）
+    if delete_source {
+        match std::fs::remove_file(&file_path) {
+            Ok(_) => log(&format!("分卷压缩后已删除原文件: {}", file_path)),
+            Err(e) => log(&format!("分卷压缩后删除原文件失败: {}, error={}", file_path, e)),
+        }
     }
 
     Ok(out_dir_str)

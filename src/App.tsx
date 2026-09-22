@@ -2046,6 +2046,19 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 <label htmlFor="blockDuplicateFileUpload">拦截同一文件重复添加（不同目标路径也拦截）</label>
               </div>
 
+              <div className="checkbox-group">
+                <input
+                  type="checkbox"
+                  id="deleteSourceAfterCompress"
+                  checked={configForm.upload.delete_source_after_compress}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, delete_source_after_compress: e.target.checked }
+                  })}
+                />
+                <label htmlFor="deleteSourceAfterCompress">分卷压缩成功后删除原文件</label>
+              </div>
+
               <div className="form-group">
                 <label>同名文件策略:</label>
                 <select

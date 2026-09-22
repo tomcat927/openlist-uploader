@@ -240,6 +240,9 @@ pub struct UploadConfig {
     /// 拦截同一文件重复添加到不同目标路径（默认开启）
     #[serde(default = "default_true")]
     pub block_duplicate_file_upload: bool,
+    /// 分卷压缩成功后删除原文件（默认开启）
+    #[serde(default = "default_true")]
+    pub delete_source_after_compress: bool,
    #[serde(default)]
    pub notify_on_complete: bool,
    #[serde(default)]
@@ -325,6 +328,7 @@ impl Default for UploadConfig {
             fail_action: "stop".to_string(),
             show_progress: false,
             block_duplicate_file_upload: true,
+            delete_source_after_compress: true,
            notify_on_complete: false,
            notify_feishu_on_queue_complete: false,
            shutdown_after_complete: false,

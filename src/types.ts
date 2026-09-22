@@ -96,6 +96,7 @@ export interface UploadConfig {
   fail_action: string;
   show_progress: boolean;
   block_duplicate_file_upload: boolean;
+  delete_source_after_compress: boolean;
  notify_on_complete: boolean;
  notify_feishu_on_queue_complete: boolean;
  shutdown_after_complete: boolean;
@@ -187,6 +188,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     fail_action: 'stop',
     show_progress: false,
     block_duplicate_file_upload: true,
+    delete_source_after_compress: true,
    notify_on_complete: false,
    notify_feishu_on_queue_complete: false,
    shutdown_after_complete: false,
