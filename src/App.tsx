@@ -1148,24 +1148,26 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 >
                   上传中 ({queue.filter(t => t.status === 'uploading').length})
                 </button>
-                <input
-                  type="text"
-                  placeholder="搜索文件名..."
-                  value={queueSearchText}
-                  onChange={(e) => setQueueSearchText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Escape' && queueSearchText) { e.preventDefault(); setQueueSearchText(''); } }}
-                  className="history-search-input"
-                />
-                {queueSearchText && (
-                  <button
-                    type="button"
-                    className="history-search-clear"
-                    onClick={() => setQueueSearchText('')}
-                    title="清空搜索内容"
-                  >
-                    ✕
-                  </button>
-                )}
+                <div className="history-search-wrapper">
+                  <input
+                    type="text"
+                    placeholder="搜索文件名..."
+                    value={queueSearchText}
+                    onChange={(e) => setQueueSearchText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Escape' && queueSearchText) { e.preventDefault(); setQueueSearchText(''); } }}
+                    className="history-search-input"
+                  />
+                  {queueSearchText && (
+                    <button
+                      type="button"
+                      className="history-search-clear"
+                      onClick={() => setQueueSearchText('')}
+                      title="清空搜索内容"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
               {isStopping && (
                 <div className="stopping-notice">
