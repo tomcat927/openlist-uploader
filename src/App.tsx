@@ -2045,6 +2045,21 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
               </div>
 
               <div className="form-group">
+                <label>同名文件策略:</label>
+                <select
+                  value={configForm.upload.file_exists_strategy?.strategy || 'skip'}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, file_exists_strategy: { strategy: e.target.value } }
+                  })}
+                >
+                  <option value="skip">跳过（同名不覆盖，秒完成）</option>
+                  <option value="overwrite">覆盖（SHA1秒传+不同内容覆盖）</option>
+                </select>
+                <span className="field-hint">覆盖模式上传前计算全文件SHA1，相同内容秒传不实际传数据，不同内容覆盖旧文件</span>
+              </div>
+
+              <div className="form-group">
                 <label>上传失败后行为:</label>
                 <select
                   value={configForm.upload.fail_action || 'stop'}

@@ -462,6 +462,7 @@ impl UploadScheduler {
             config.as_task,
             &config.upload_method,
             Some(rate_limiter),
+            config.file_exists_strategy.value == "overwrite",
         ).await {
             Ok(Some(alist_task_id)) => {
                 log(&format!("等待 Alist 后台上传任务完成: file={}, alist_task_id={}", task.file.name, alist_task_id));

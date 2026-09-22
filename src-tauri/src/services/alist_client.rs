@@ -320,6 +320,25 @@ impl AlistClient {
         }
     }
 
+    /// 计算文件全量 SHA1（用于上传时秒传，发给 OpenList 的 X-File-Sha1 头）
+    async fn compute_sha1(file_path: &str) -> Result<String, String> {
+        use sha1::{Sha1, Digest};
+        use tokio::io::AsyncReadExt;
+        let mut file = tokio::fs::File::open(file_path).await
+            .map_err(|e| format!("打开文件失败: {}", e))?;
+        let mut hasher = Sha1::new();
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = file.read(&mut buf).await
+                .map_err(|e| format!("读取文件失败: {}", e))?;
+            if n == 0 { break; }
+            hasher.update(&buf[..n]);
+        }
+        let result = hasher.finalize();
+        let hex_str: String = result.iter().map(|b| format!("{:02x}", b)).collect();
+        Ok(hex_str)
+    }
+
     pub async fn upload_file(
         &self,
         file_path: &str,
@@ -327,6 +346,7 @@ impl AlistClient {
         as_task: bool,
         upload_method: &str,
         rate_limiter: Option<Arc<RateLimiter>>,
+        overwrite: bool,
     ) -> Result<Option<String>, AlistError> {
         if is_root_alist_path(alist_path) {
             log(&format!("Alist 上传请求被拦截: file_path={}, alist_path=/, reason=根目录不是具体上传目录", file_path));
@@ -335,7 +355,7 @@ impl AlistClient {
 
         let file_name = file_name_from_path(file_path);
         let target_path = join_alist_path(alist_path, &file_name);
-        log(&format!("打开文件准备上传: file_path={}, file_name={}", file_path, file_name));
+        log(&format!("打开文件准备上传: file_path={}, file_name={}, overwrite={}", file_path, file_name, overwrite));
         
         let file = tokio::fs::File::open(file_path).await?;
         let file_len = file.metadata().await?.len();
@@ -344,8 +364,27 @@ impl AlistClient {
 
         let mut headers = self.headers();
         headers.insert("File-Path", target_path.parse().unwrap());
-        // 云端已存在同名文件时，OpenList 返回 403 "file exists"，不传输（详见 OpenList fsup.go）
-        headers.insert("Overwrite", "false".parse().unwrap());
+        if overwrite {
+            // 覆盖模式：让 OpenList 通过 fsup.go 的文件名检查，进入驱动层
+            // 115 驱动会用 SHA1 做秒传判断——相同内容秒传完成，不同内容覆盖
+            headers.insert("Overwrite", "true".parse().unwrap());
+            // 算全文件 SHA1 发给 OpenList，避免驱动层重新计算
+            if file_len > 0 {
+                log(&format!("计算文件 SHA1 用于秒传: file_name={}, size={}B", file_name, file_len));
+                match Self::compute_sha1(file_path).await {
+                    Ok(sha1_hex) => {
+                        log(&format!("SHA1 计算完成: file_name={}, sha1={}", file_name, &sha1_hex));
+                        headers.insert("X-File-Sha1", sha1_hex.parse().unwrap());
+                    }
+                    Err(e) => {
+                        log(&format!("SHA1 计算失败，跳过秒传头: file_name={}, error={}", file_name, e));
+                    }
+                }
+            }
+        } else {
+            // 不覆盖模式：OpenList 按文件名判存，同名返回 403
+            headers.insert("Overwrite", "false".parse().unwrap());
+        }
         if as_task {
             headers.insert("As-Task", "true".parse().unwrap());
         }
