@@ -980,6 +980,13 @@ pub async fn split_compress_file(
 
     let out_dir_str = out_dir.to_string_lossy().to_string();
     log(&format!("分卷压缩完成: file={}, out_dir={}, parts={:?}", file_name, out_dir_str, parts));
+
+    // 压缩成功后删除原文件
+    match std::fs::remove_file(&file_path) {
+        Ok(_) => log(&format!("分卷压缩后已删除原文件: {}", file_path)),
+        Err(e) => log(&format!("分卷压缩后删除原文件失败: {}, error={}", file_path, e)),
+    }
+
     Ok(out_dir_str)
 }
 
