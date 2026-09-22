@@ -1015,14 +1015,37 @@ pub async fn rename_blocked_folder(
     let original_bytes = original_name.len();
     let parent_dir = src_path.parent().ok_or("无法获取父目录")?;
 
-    // 截断到 50 字符 + "-dir"
+    // 截断到字节限制：175 字节 - "-dir"(4字节) = 171 字节可用
+    // 必须按字节截断（中文字符占 3 字节 UTF-8），不能按字符数
+    const NAME_BYTES_LIMIT: usize = 175;
+    const DIR_SUFFIX: &str = "-dir";
+    let max_base_bytes = NAME_BYTES_LIMIT - DIR_SUFFIX.len(); // 171
+
     let base_name = if original_name.ends_with("-dir") {
-        original_name[..original_name.len() - 4].to_string()
+        original_name[..original_name.len() - DIR_SUFFIX.len()].to_string()
     } else {
         original_name.clone()
     };
-    let truncated: String = base_name.chars().take(50).collect();
-    let new_name = format!("{}-dir", truncated);
+
+    // 按字节截断，不能截断到 UTF-8 字符中间
+    let truncated: String = {
+        let base_bytes = base_name.as_bytes();
+        if base_bytes.len() <= max_base_bytes {
+            base_name.clone()
+        } else {
+            // 逐字符累积，直到字节数即将超限
+            let mut result = String::new();
+            for ch in base_name.chars() {
+                let char_bytes = ch.len_utf8();
+                if result.len() + char_bytes > max_base_bytes {
+                    break;
+                }
+                result.push(ch);
+            }
+            result
+        }
+    };
+    let new_name = format!("{}{}", truncated, DIR_SUFFIX);
     let new_path = parent_dir.join(&new_name);
 
     if new_path == *src_path {
