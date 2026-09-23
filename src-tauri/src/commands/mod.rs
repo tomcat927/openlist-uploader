@@ -1216,6 +1216,76 @@ pub async fn rename_blocked_folder(
     rename_blocked_folder_inner(&folder_path)
 }
 
+/// 将单个超长名称文件重命名为短名（尽量保留扩展名）；名称已在限制内时原样返回
+#[tauri::command]
+pub async fn rename_blocked_file(file_path: String) -> Result<String, String> {
+    use std::path::Path;
+
+    let src_path = Path::new(&file_path);
+    if !src_path.exists() || !src_path.is_file() {
+        return Err(format!("文件不存在或不是文件: {}", file_path));
+    }
+
+    let original_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let original_bytes = original_name.len();
+    let parent_dir = src_path.parent().ok_or("无法获取父目录")?;
+
+    let new_name = truncate_filename_to_bytes(&original_name, NAME_BYTES_LIMIT);
+    if new_name == original_name {
+        log(&format!("文件名已在限制内，无需改名: {} ({} 字节)", file_path, original_bytes));
+        return Ok(file_path);
+    }
+    let new_path = parent_dir.join(&new_name);
+
+    // 如果目标已存在，在扩展名前加序号
+    let mut final_path = new_path.clone();
+    let mut counter = 1;
+    while final_path.exists() {
+        let suf_name = match new_name.rfind('.') {
+            Some(pos) => format!("{}-{}{}", &new_name[..pos], counter, &new_name[pos..]),
+            None => format!("{}-{}", new_name, counter),
+        };
+        final_path = parent_dir.join(&suf_name);
+        counter += 1;
+    }
+
+    std::fs::rename(src_path, &final_path).map_err(|e| format!("重命名文件失败: {}", e))?;
+    let final_name = final_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    log(&format!(
+        "文件已重命名: {} ({} 字节) -> {} ({} 字节)",
+        original_name, original_bytes, final_name, final_name.len()
+    ));
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
+/// 按字节限制截断文件名，尽量保留扩展名（最后一个点之后的部分）
+fn truncate_filename_to_bytes(name: &str, max_bytes: usize) -> String {
+    if name.len() <= max_bytes {
+        return name.to_string();
+    }
+    if let Some(pos) = name.rfind('.') {
+        let (stem, ext) = name.split_at(pos);
+        if ext.len() <= max_bytes {
+            let max_stem = max_bytes - ext.len();
+            let new_stem = truncate_to_bytes(stem, max_stem);
+            let result = format!("{}{}", new_stem, ext);
+            if !new_stem.is_empty() && result.len() <= max_bytes {
+                return result;
+            }
+        }
+    }
+    truncate_to_bytes(name, max_bytes)
+}
+
 /// 从文件名提取 part 后缀（如 "xxx.part1.rar" → "part1.rar"）
 fn extract_part_suffix(name: &str) -> Option<String> {
     let lower = name.to_lowercase();

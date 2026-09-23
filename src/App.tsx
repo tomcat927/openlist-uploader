@@ -12,6 +12,7 @@ import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig, type BlockedFil
 import './App.css';
 
 const FOUR_GB = 4 * 1024 * 1024 * 1024;
+const FIVE_GB = 5 * 1024 * 1024 * 1024;
 
 type CompressOpKind = 'compress' | 'rename';
 
@@ -251,7 +252,9 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     setRecordBusy(pathKey, { kind: 'rename', phase: 'running', percent: 0 });
     try {
       await writeClientLog(`开始改名重传: file=${record.file_path}, target=${record.target_path}`);
-      const newPath = await invoke<string>('rename_blocked_folder', { folderPath: record.file_path });
+      const newPath = record.file_path.endsWith('-dir')
+        ? await invoke<string>('rename_blocked_folder', { folderPath: record.file_path })
+        : await invoke<string>('rename_blocked_file', { filePath: record.file_path });
       await writeClientLog(`改名完成: new_path=${newPath}`);
 
       // 自动加入上传队列
@@ -1625,6 +1628,8 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 <tbody>
                   {filteredBlockedFiles.map((record) => {
                     const realIndex = blockedFiles.indexOf(record);
+                    const isNameTooLong = record.reason.includes('过长');
+                    const needsSplit = record.file_size > FIVE_GB;
                     return (
                     <Fragment key={realIndex}>
                     <tr className={record.resolved ? 'blocked-row-resolved' : ''}>
@@ -1650,7 +1655,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         )}
                       </td>
                       <td>
-                        {!record.resolved && !record.file_path.endsWith('-dir') && (
+                        {!record.resolved && needsSplit && !record.file_path.endsWith('-dir') && (
                           <button
                             onClick={() => handleSplitCompress(record, realIndex)}
                             className="small primary"
@@ -1662,12 +1667,12 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                               : '分卷压缩'}
                           </button>
                         )}
-                        {!record.resolved && record.file_path.endsWith('-dir') && (
+                        {!record.resolved && isNameTooLong && (
                           <button
                             onClick={() => handleRenameAndUpload(record, realIndex)}
                             className="small primary"
                             disabled={!!compressStates[record.file_path]}
-                            title="自动截断文件夹名和分卷文件名，创建存根后加入上传队列"
+                            title="自动截断名称至 175 字节内后加入上传队列"
                           >
                             {compressStates[record.file_path]?.kind === 'rename' ? '处理中...' : '改名重传'}
                           </button>

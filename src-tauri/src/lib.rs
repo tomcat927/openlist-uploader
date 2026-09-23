@@ -528,6 +528,7 @@ pub fn run() {
             crate::commands::split_compress_file,
             crate::commands::clean_split_compress_output,
             crate::commands::rename_blocked_folder,
+            crate::commands::rename_blocked_file,
            crate::commands::get_blocked_files,
            crate::commands::remove_blocked_file,
            crate::commands::resolve_blocked_file,
