@@ -866,7 +866,10 @@ pub async fn split_compress_file(
         .arg(&rar_base)
         .arg(&file_path)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // stdin 置空：rar 弹出确认提示（如磁盘空间不足的重试提示、覆盖确认）时立即收到 EOF 而退出，
+        // 而不是永久等待键盘输入导致压缩卡死
+        .stdin(std::process::Stdio::null());
 
     #[cfg(windows)]
     {
@@ -899,9 +902,14 @@ pub async fn split_compress_file(
     let mut stdout = child.stdout.take().ok_or("无法获取 rar stdout")?;
     let mut stderr = child.stderr.take().ok_or("无法获取 rar stderr")?;
     let mut stdout_bytes: Vec<u8> = Vec::new();
-    let mut stderr_bytes: Vec<u8> = Vec::new();
     let mut line_buf = String::new();
     let mut buf = [0u8; 4096];
+    // stderr 由独立线程读取，避免 rar 同时写满 stdout/stderr 管道时互相阻塞死锁
+    let stderr_handle = std::thread::spawn(move || {
+        let mut sbuf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stderr, &mut sbuf);
+        sbuf
+    });
     loop {
         match stdout.read(&mut buf) {
             Ok(0) => break,
@@ -916,6 +924,10 @@ pub async fn split_compress_file(
                         if let Some(pct) = parse_rar_progress(&line) {
                             let _ = app.emit("compress_progress", CompressEvent { file_path: file_path.clone(), percent: pct });
                             log(&format!("压缩进度: {}%", pct));
+                        } else {
+                            // 非进度行实时记录：rar 的提示/错误文本（如磁盘空间不足）立刻可见，
+                            // 不再等到进程退出后才输出
+                            log(&format!("rar 实时输出: {}", line));
                         }
                     }
                     line_buf = line_buf[pos+1..].to_string();
@@ -928,12 +940,8 @@ pub async fn split_compress_file(
         }
     }
 
-    // 读 stderr 原始字节
-    {
-        let mut sbuf = Vec::new();
-        std::io::Read::read_to_end(&mut stderr, &mut sbuf).ok();
-        stderr_bytes.extend(&sbuf);
-    }
+    // 等待 stderr 读取线程完成
+    let stderr_bytes: Vec<u8> = stderr_handle.join().unwrap_or_default();
 
     let status = child.wait()
         .map_err(|e| format!("等待 rar.exe 结束失败: {}", e))?;
