@@ -17,6 +17,9 @@ struct CompressEvent {
     percent: u8,
 }
 
+/// 115Crypt 名称字节数上限（文件夹名、文件名均适用）
+const NAME_BYTES_LIMIT: usize = 175;
+
 fn split_compress_lock() -> Arc<Mutex<()>> {
     SPLIT_COMPRESS_MUTEX.get_or_init(|| Arc::new(Mutex::new(()))).clone()
 }
@@ -1039,29 +1042,33 @@ pub async fn split_compress_file(
         }
     }
 
-    // 检测产物名称是否超长，超长则自动改名（文件夹名 + part 文件名都截断）
-    let final_dir = if check_name_too_long(&out_dir_str) {
-        log(&format!("检测到分卷压缩产物名称超长，自动改名: {}", out_dir_str));
+    // 检测产物名称是否超长，超长则自动改名：
+    // - 文件夹名（xxx-dir）超过 175 字节
+    // - 任一生成的 .partN.rar 分卷文件名超过 175 字节（分卷名 = 基础名+后缀，比文件夹名更容易超限，且队列加入时按文件名拦截）
+    let folder_name_too_long = check_name_too_long(&out_dir_str);
+    let part_name_too_long = parts.iter().any(|p| p.len() > NAME_BYTES_LIMIT);
+    let mut final_dir = out_dir_str;
+    if folder_name_too_long || part_name_too_long {
+        log(&format!(
+            "检测到分卷压缩产物名称超长，自动改名 (folder_too_long={}, part_too_long={}): {}",
+            folder_name_too_long, part_name_too_long, out_dir_str
+        ));
         match rename_blocked_folder_inner(&out_dir_str) {
             Ok(renamed) => {
                 log(&format!("分卷压缩产物自动改名完成: {} -> {}", out_dir_str, renamed));
-                renamed
+                final_dir = renamed;
             }
             Err(e) => {
                 log(&format!("分卷压缩产物自动改名失败: {}, 返回原名", e));
-                out_dir_str
             }
         }
-    } else {
-        out_dir_str
-    };
+    }
 
     Ok(final_dir)
 }
 
 /// 检查路径中是否有任何一段超过 175 字节
 fn check_name_too_long(path: &str) -> bool {
-    const NAME_BYTES_LIMIT: usize = 175;
     for segment in path.replace('\\', "/").split('/').filter(|s| !s.is_empty()) {
         if segment.len() > NAME_BYTES_LIMIT {
             return true;
@@ -1103,9 +1110,28 @@ fn rename_blocked_folder_inner(folder_path: &str) -> Result<String, String> {
     let original_bytes = original_name.len();
     let parent_dir = src_path.parent().ok_or("无法获取父目录")?;
 
-    const NAME_BYTES_LIMIT: usize = 175;
     const DIR_SUFFIX: &str = "-dir";
-    let max_base_bytes = NAME_BYTES_LIMIT - DIR_SUFFIX.len(); // 171
+
+    // 先收集内部 part 文件列表（重命名文件夹前），并反推基础名上限：
+    // 文件夹名 = base + "-dir" ≤ 175；分卷名 = base + ".partN.rar" ≤ 175
+    // 取两者更紧的限制，保证两种名称都在 115Crypt 175 字节限制内
+    let mut part_files: Vec<(std::path::PathBuf, String)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(src_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".rar") {
+                    part_files.push((path, name.to_string()));
+                }
+            }
+        }
+    }
+    let longest_part_suffix = part_files
+        .iter()
+        .filter_map(|(_, name)| extract_part_suffix(name).map(|s| s.len()))
+        .max()
+        .unwrap_or(0);
+    let max_base_bytes = NAME_BYTES_LIMIT - DIR_SUFFIX.len().max(longest_part_suffix);
 
     let base_name = if original_name.ends_with("-dir") {
         original_name[..original_name.len() - DIR_SUFFIX.len()].to_string()
@@ -1135,19 +1161,6 @@ fn rename_blocked_folder_inner(folder_path: &str) -> Result<String, String> {
         .unwrap_or(&new_name)
         .to_string();
 
-    // 先收集内部 part 文件列表（重命名文件夹前）
-    let mut part_files: Vec<(std::path::PathBuf, String)> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(src_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = entry.file_name().to_str() {
-                if name.ends_with(".rar") {
-                    part_files.push((path, name.to_string()));
-                }
-            }
-        }
-    }
-
     // 创建 TXT 存根（在原文件夹内）
     let txt_path = src_path.join("原名.txt");
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -1166,7 +1179,7 @@ fn rename_blocked_folder_inner(folder_path: &str) -> Result<String, String> {
     }
 
     // 重命名 part 文件（先重命名内部文件，再重命名文件夹）
-    // part 文件名格式：base.part1.rar，需要确保总长 ≤ 175 字节
+    // part 文件名格式：base + ".partN.rar"，需要确保总长 ≤ 175 字节
     let new_base = if final_name.ends_with("-dir") {
         final_name[..final_name.len() - DIR_SUFFIX.len()].to_string()
     } else {
@@ -1175,10 +1188,10 @@ fn rename_blocked_folder_inner(folder_path: &str) -> Result<String, String> {
 
     for (path, name) in &part_files {
         if let Some(part_suffix) = extract_part_suffix(name) {
-            // part_suffix 如 ".part1.rar"（约 11 字节），需要 base + part_suffix ≤ 175
+            // part_suffix 如 ".part1.rar"（约 10-11 字节，含前导点），需要 base + part_suffix ≤ 175
             let max_part_base = NAME_BYTES_LIMIT - part_suffix.len();
             let part_base = truncate_to_bytes(&new_base, max_part_base);
-            let new_file_name = format!("{}.{}", part_base, part_suffix);
+            let new_file_name = format!("{}{}", part_base, part_suffix);
             let new_file_path = src_path.join(&new_file_name);
             if let Err(e) = std::fs::rename(path, &new_file_path) {
                 log(&format!("重命名 part 文件失败: {} -> {}, error={}", name, new_file_name, e));
