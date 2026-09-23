@@ -80,20 +80,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          try {
-            $assets = gh release view latest --repo $env:GITHUB_REPOSITORY --json assets -q '.assets[].name' 2>$null | ForEach-Object { $_.Trim() }
-            if (-not $assets) {
-              Write-Host "No existing release, skipping cleanup"
-              exit 0
-            }
-            $toDelete = $assets | Where-Object { $_ -like '*.exe' -or $_ -like '*.exe.sig' }
-            foreach ($name in $toDelete) {
-              Write-Host "Deleting $name"
-              gh release delete-asset latest $name --repo $env:GITHUB_REPOSITORY --yes
-            }
-          } catch {
-            Write-Host "No existing release to clean, skipping"
+          $assets = gh release view latest --repo $env:GITHUB_REPOSITORY --json assets -q '.assets[].name' 2>$null | ForEach-Object { $_.Trim() }
+          if (-not $assets) {
+            Write-Host "No existing release, skipping cleanup"
+            exit 0
           }
+          $toDelete = $assets | Where-Object { $_ -like '*.exe' -or $_ -like '*.exe.sig' }
+          foreach ($name in $toDelete) {
+            Write-Host "Deleting $name"
+            gh release delete-asset latest $name --repo $env:GITHUB_REPOSITORY --yes
+            if ($LASTEXITCODE -ne 0) {
+              # 404 等：资产可能已被并发构建删除，不阻塞流程
+              Write-Host "WARN: delete-asset failed for $name (exit=$LASTEXITCODE), continuing"
+              $global:LASTEXITCODE = 0
+            }
+          }
+          $global:LASTEXITCODE = 0
 
       - name: Build Tauri App for Windows
         shell: pwsh
