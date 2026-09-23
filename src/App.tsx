@@ -925,6 +925,22 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   }, [queue]);
 
   const historyStats = useMemo(() => {
+    // 优先使用后端基于全量历史计算的统计（不受分页影响）
+    const backendStats = historyPage?.stats;
+    if (backendStats) {
+      return {
+        total: backendStats.total,
+        completed: backendStats.completed,
+        failed: backendStats.failed,
+        successRate: backendStats.total > 0 ? Math.round((backendStats.completed / backendStats.total) * 100) : 0,
+        totalBytes: backendStats.total_bytes,
+        monthBytes: backendStats.month_bytes,
+        todayCount: backendStats.today_count,
+        todayBytes: backendStats.today_bytes,
+        avgSpeed: backendStats.avg_speed,
+      };
+    }
+    // 回退：基于当前页数据估算（旧后端兼容）
     const total = historyPage?.total ?? history.length;
     const completed = history.filter(t => t.status === 'completed');
     const failed = history.filter(t => t.status === 'failed');

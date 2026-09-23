@@ -486,6 +486,22 @@ pub struct HistoryPage {
     pub page: usize,
     pub page_size: usize,
     pub total_pages: usize,
+    /// 基于全量历史记录的统计（不受分页影响）
+    #[serde(default)]
+    pub stats: Option<HistoryStats>,
+}
+
+/// 全量历史统计（今日/本月上传数与字节数、总数、成功数、平均速度）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryStats {
+    pub total: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub total_bytes: u64,
+    pub today_count: usize,
+    pub today_bytes: u64,
+    pub month_bytes: u64,
+    pub avg_speed: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

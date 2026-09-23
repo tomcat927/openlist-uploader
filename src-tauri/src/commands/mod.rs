@@ -76,8 +76,48 @@ pub async fn get_history_page(
     sort_order: Option<String>,
 ) -> Result<HistoryPage, String> {
     let history = queue_manager.history.read().await;
-    let mut records: Vec<UploadTask> = history.records.clone();
+    let all_records: Vec<UploadTask> = history.records.clone();
     drop(history);
+
+    // 全量统计（不受过滤/搜索影响），供看板使用
+    let stats = {
+        use chrono::{TimeZone, Datelike};
+        let completed: Vec<&UploadTask> = all_records.iter().filter(|t| t.status == TaskStatus::Completed).collect();
+        let total_bytes: u64 = completed.iter().map(|t| t.file.size).sum();
+        let now_local = chrono::Local::now();
+        // end_time 为 UTC，统一转到本地时区后按本地日历对齐"今日/本月"
+        let to_local = |t: &UploadTask| -> Option<chrono::DateTime<chrono::Local>> {
+            t.end_time.map(|e| chrono::Local.from_utc_datetime(&e.naive_utc()))
+        };
+        let today_start = now_local.date_naive().and_hms_opt(0, 0, 0).unwrap();
+        let month_start = chrono::NaiveDate::from_ymd_opt(now_local.year(), now_local.month(), 1)
+            .unwrap_or(now_local.date_naive())
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let today_completed: Vec<&UploadTask> = completed.iter().copied()
+            .filter(|t| matches!(to_local(t), Some(lt) if lt.naive_local() >= today_start))
+            .collect();
+        let today_count = today_completed.len();
+        let today_bytes: u64 = today_completed.iter().map(|t| t.file.size).sum();
+        let month_bytes: u64 = completed.iter()
+            .filter(|t| matches!(to_local(t), Some(lt) if lt.naive_local() >= month_start))
+            .map(|t| t.file.size)
+            .sum();
+        let total_duration: f64 = completed.iter().map(|t| t.duration.unwrap_or(0) as f64).sum();
+        let avg_speed = if total_duration > 0.0 { total_bytes as f64 / total_duration } else { 0.0 };
+        HistoryStats {
+            total: all_records.len(),
+            completed: completed.len(),
+            failed: all_records.iter().filter(|t| t.status == TaskStatus::Failed).count(),
+            total_bytes,
+            today_count,
+            today_bytes,
+            month_bytes,
+            avg_speed,
+        }
+    };
+
+    let mut records: Vec<UploadTask> = all_records.clone();
 
     if let Some(ref filter) = status_filter {
         if filter != "all" {
@@ -105,7 +145,7 @@ pub async fn get_history_page(
     let start = page.saturating_sub(1) * page_size;
     let tasks: Vec<UploadTask> = records.into_iter().skip(start).take(page_size).collect();
 
-    Ok(HistoryPage { tasks, total, page, page_size, total_pages })
+    Ok(HistoryPage { tasks, total, page, page_size, total_pages, stats: Some(stats) })
 }
 
 #[tauri::command]

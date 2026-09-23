@@ -117,6 +117,18 @@ export interface HistoryPage {
   page: number;
   page_size: number;
   total_pages: number;
+  stats?: HistoryStats;
+}
+
+export interface HistoryStats {
+  total: number;
+  completed: number;
+  failed: number;
+  total_bytes: number;
+  today_count: number;
+  today_bytes: number;
+  month_bytes: number;
+  avg_speed: number;
 }
 
 export interface LogSyncConfig {
