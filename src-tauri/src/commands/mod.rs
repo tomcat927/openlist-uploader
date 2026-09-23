@@ -1047,7 +1047,7 @@ pub async fn split_compress_file(
     // - 任一生成的 .partN.rar 分卷文件名超过 175 字节（分卷名 = 基础名+后缀，比文件夹名更容易超限，且队列加入时按文件名拦截）
     let folder_name_too_long = check_name_too_long(&out_dir_str);
     let part_name_too_long = parts.iter().any(|p| p.len() > NAME_BYTES_LIMIT);
-    let mut final_dir = out_dir_str;
+    let mut final_dir = out_dir_str.clone();
     if folder_name_too_long || part_name_too_long {
         log(&format!(
             "检测到分卷压缩产物名称超长，自动改名 (folder_too_long={}, part_too_long={}): {}",
