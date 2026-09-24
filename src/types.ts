@@ -29,10 +29,31 @@ export interface BlockedFileRecord {
   file_name: string;
   file_size: number;
   reason: string;
+  reasons?: BlockedReason[];
+  is_directory?: boolean;
   blocked_at: string;
   target_path: string;
   resolved: boolean;
 }
+
+export type BlockedReason =
+  | {
+      kind: 'name_too_long';
+      segment: string;
+      actual_bytes: number;
+      limit_bytes: number;
+    }
+  | {
+      kind: 'file_too_large';
+      actual_bytes: number;
+      limit_bytes: number;
+    }
+  | {
+      kind: 'target_path_too_long';
+      segment: string;
+      actual_bytes: number;
+      limit_bytes: number;
+    };
 
 export interface AddToQueueResult {
   tasks: UploadTask[];

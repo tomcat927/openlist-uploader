@@ -366,11 +366,37 @@ impl Default for NotificationConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BlockedReason {
+    NameTooLong {
+        segment: String,
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
+    TargetPathTooLong {
+        segment: String,
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
+    FileTooLarge {
+        actual_bytes: u64,
+        limit_bytes: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockedFileRecord {
     pub file_path: String,
     pub file_name: String,
     pub file_size: u64,
     pub reason: String,
+    /// 结构化拦截原因，用于前端决定可执行的处理方式。
+    /// 旧记录没有该字段时由 serde 默认为空，继续使用 reason 兼容显示。
+    #[serde(default)]
+    pub reasons: Vec<BlockedReason>,
+    /// 被拦截路径在记录时是否为本地目录，用于选择正确的改名处理方式。
+    #[serde(default)]
+    pub is_directory: bool,
     pub blocked_at: DateTime<Utc>,
     /// openlist 目标路径（拦截时用户选择的目录）
     #[serde(default)]

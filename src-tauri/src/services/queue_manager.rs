@@ -17,6 +17,68 @@ fn check_name_bytes_limit(path: &str) -> Option<String> {
     }
     None
 }
+
+struct FileValidation {
+    blockers: Vec<BlockedReason>,
+    warning: Option<String>,
+}
+
+fn blocked_reason_text(reason: &BlockedReason, file_name: &str) -> String {
+    match reason {
+        BlockedReason::NameTooLong {
+            segment,
+            actual_bytes,
+            limit_bytes,
+        } => format!(
+            "文件名过长，115Crypt 限制 {} 字节，当前 {} 字节: {}",
+            limit_bytes, actual_bytes, segment
+        ),
+        BlockedReason::TargetPathTooLong {
+            segment,
+            actual_bytes,
+            limit_bytes,
+        } => format!(
+            "目标目录名过长，115Crypt 限制 {} 字节，当前 {} 字节: {}",
+            limit_bytes, actual_bytes, segment
+        ),
+        BlockedReason::FileTooLarge {
+            actual_bytes,
+            limit_bytes,
+        } => format!(
+            "文件大小超限，115 网盘非会员单个文件最大支持 {}，当前 {}，{} 已阻止加入上传队列。",
+            format_size_limit(*limit_bytes),
+            format_file_size(*actual_bytes),
+            file_name,
+        ),
+    }
+}
+
+fn format_size_limit(bytes: u64) -> String {
+    if bytes % (1024 * 1024 * 1024) == 0 {
+        format!("{}GB", bytes / (1024 * 1024 * 1024))
+    } else {
+        format!("{} 字节", bytes)
+    }
+}
+
+fn format_file_size(bytes: u64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+    while size >= 1024.0 && unit_index < units.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    format!("{:.2} {}", size, units[unit_index])
+}
+
+fn format_blocked_reasons(reasons: &[BlockedReason], file_name: &str) -> String {
+    reasons
+        .iter()
+        .map(|reason| blocked_reason_text(reason, file_name))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 use chrono::{DateTime, Utc};
 use crate::models::*;
 use crate::utils::storage::Storage;
@@ -123,34 +185,54 @@ impl QueueManager {
 
             // 校验目标路径各级目录名 UTF-8 字节数是否超限
             if let Some(over_name) = check_name_bytes_limit(&folder_target) {
-                let msg = format!("目标目录名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
-                log(&format!("文件夹被名称长度拦截: folder_name={}, bytes={}", folder_name, over_name.len()));
-                self.record_blocked_file(&file_path, &folder_name, 0, &msg, &folder_target).await;
+                let over_bytes = over_name.len();
+                let reasons = vec![BlockedReason::TargetPathTooLong {
+                    actual_bytes: over_bytes,
+                    limit_bytes: NAME_BYTES_LIMIT,
+                    segment: over_name,
+                }];
+                let msg = format_blocked_reasons(&reasons, &folder_name);
+                log(&format!("文件夹被名称长度拦截: folder_name={}, bytes={}", folder_name, over_bytes));
+                self.record_blocked_file(
+                    &file_path,
+                    &folder_name,
+                    0,
+                    &reasons,
+                    &folder_target,
+                )
+                .await;
                 warnings.push(msg);
                 return Ok(AddToQueueResult { tasks: added_tasks, warnings });
             }
             
             for file_info in files {
-                // 校验文件名 UTF-8 字节数是否超限
-                if let Some(over_name) = check_name_bytes_limit(&file_info.name) {
-                    let msg = format!("文件名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
-                    log(&format!("文件被名称长度拦截: file_name={}, bytes={}", file_info.name, over_name.len()));
-                    self.record_blocked_file(&file_info.path, &file_info.name, file_info.size, &msg, &folder_target).await;
-                    warnings.push(msg);
+                let validation = self.validate_file(&file_info.name, file_info.size, None).await;
+                if !validation.blockers.is_empty() {
+                    let message = format_blocked_reasons(&validation.blockers, &file_info.name);
+                    log(&format!(
+                        "文件夹内文件被拦截: file_path={}, file_name={}, size={}B, reasons={}",
+                        file_info.path,
+                        file_info.name,
+                        file_info.size,
+                        message.replace('\n', " | ")
+                    ));
+                    self.record_blocked_file(
+                        &file_info.path,
+                        &file_info.name,
+                        file_info.size,
+                        &validation.blockers,
+                        &folder_target,
+                    )
+                    .await;
+                    warnings.push(message);
                     continue;
                 }
-                match self.validate_large_file(&file_info.name, file_info.size).await {
-                    Ok(Some(warning)) => {
-                        log(&format!("大文件风险提示: file_path={}, file_name={}, size={}B, warning={}", file_info.path, file_info.name, file_info.size, warning));
-                        warnings.push(warning);
-                    }
-                    Ok(None) => {}
-                    Err(message) => {
-                        log(&format!("文件夹内文件被大文件保护拦截: file_path={}, file_name={}, size={}B, error={}", file_info.path, file_info.name, file_info.size, message));
-                        self.record_blocked_file(&file_info.path, &file_info.name, file_info.size, &message, &folder_target).await;
-                        warnings.push(message);
-                        continue;
-                    }
+                if let Some(warning) = validation.warning {
+                    log(&format!(
+                        "大文件风险提示: file_path={}, file_name={}, size={}B, warning={}",
+                        file_info.path, file_info.name, file_info.size, warning
+                    ));
+                    warnings.push(warning);
                 }
 
                 let task = self.add_single_file_to_queue(&file_info, &folder_target).await?;
@@ -161,26 +243,43 @@ impl QueueManager {
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // 校验文件名 UTF-8 字节数是否超限
-            if let Some(over_name) = check_name_bytes_limit(&name) {
-                let msg = format!("文件名过长，115Crypt 限制 175 字节，当前 {} 字节: {}", over_name.len(), over_name);
-                log(&format!("文件被名称长度拦截: file_name={}, bytes={}", name, over_name.len()));
-                self.record_blocked_file(&file_path, &name, size, &msg, &target_root).await;
-                return Err(msg.into());
-            }
+            let validation = self
+                .validate_file(&name, size, Some(&target_root))
+                .await;
+            if !validation.blockers.is_empty() {
+                let message = format_blocked_reasons(&validation.blockers, &name);
+                log(&format!(
+                    "单文件被拦截: file_path={}, file_name={}, size={}B, reasons={}",
+                    file_path,
+                    name,
+                    size,
+                    message.replace('\n', " | ")
+                ));
+                self.record_blocked_file(
+                    &file_path,
+                    &name,
+                    size,
+                    &validation.blockers,
+                    &target_root,
+                )
+                .await;
+                warnings.push(message.clone());
 
-            match self.validate_large_file(&name, size).await {
-                Ok(Some(warning)) => {
-                    log(&format!("大文件风险提示: file_path={}, file_name={}, size={}B, warning={}", file_path, name, size, warning));
-                    warnings.push(warning);
+                let has_name_blocker = validation
+                    .blockers
+                    .iter()
+                    .any(|reason| matches!(reason, BlockedReason::NameTooLong { .. }));
+                if has_name_blocker {
+                    return Err(message.into());
                 }
-                Ok(None) => {}
-                Err(message) => {
-                    log(&format!("单文件被大文件保护拦截: file_path={}, file_name={}, size={}B, error={}", file_path, name, size, message));
-                    self.record_blocked_file(&file_path, &name, size, &message, &target_root).await;
-                    warnings.push(message);
-                    return Ok(AddToQueueResult { tasks: added_tasks, warnings });
-                }
+                return Ok(AddToQueueResult { tasks: added_tasks, warnings });
+            }
+            if let Some(warning) = validation.warning {
+                log(&format!(
+                    "大文件风险提示: file_path={}, file_name={}, size={}B, warning={}",
+                    file_path, name, size, warning
+                ));
+                warnings.push(warning);
             }
             
             let mut task = UploadTask::new(file_path.clone(), target_root.clone());
@@ -212,21 +311,58 @@ impl QueueManager {
         Ok(AddToQueueResult { tasks: added_tasks, warnings })
     }
 
-    async fn validate_large_file(&self, file_name: &str, size: u64) -> Result<Option<String>, String> {
+    async fn validate_file(
+        &self,
+        file_name: &str,
+        size: u64,
+        target_path: Option<&str>,
+    ) -> FileValidation {
         let config = self.config.read().await;
         let block_files_over_5gb = config.upload.block_files_over_5gb;
         let warn_files_over_4gb = config.upload.warn_files_over_4gb;
         drop(config);
 
+        let mut blockers = Vec::new();
+        if let Some(over_name) = check_name_bytes_limit(file_name) {
+            blockers.push(BlockedReason::NameTooLong {
+                actual_bytes: over_name.len(),
+                limit_bytes: NAME_BYTES_LIMIT,
+                segment: over_name,
+            });
+        }
+
+        if let Some(target_path) = target_path {
+            if let Some(over_name) = check_name_bytes_limit(target_path) {
+                blockers.push(BlockedReason::TargetPathTooLong {
+                    actual_bytes: over_name.len(),
+                    limit_bytes: NAME_BYTES_LIMIT,
+                    segment: over_name,
+                });
+            }
+        }
+
         if block_files_over_5gb && size > FIVE_GB {
-            return Err(format!("115 网盘非会员单个文件最大支持 5GB，{} 超过限制，已阻止加入上传队列。", file_name));
+            blockers.push(BlockedReason::FileTooLarge {
+                actual_bytes: size,
+                limit_bytes: FIVE_GB,
+            });
         }
 
-        if warn_files_over_4gb && size > FOUR_GB {
-            return Ok(Some(format!("{} 超过 4GB。大文件上传耗时较长，若 1 小时内未完成可能因 Token 过期导致失败。建议在上传带宽较好时上传，或先压缩/分卷处理。", file_name)));
-        }
+        let warning = if blockers
+            .iter()
+            .any(|reason| matches!(reason, BlockedReason::FileTooLarge { .. }))
+        {
+            None
+        } else if warn_files_over_4gb && size > FOUR_GB {
+            Some(format!(
+                "{} 超过 4GB。大文件上传耗时较长，若 1 小时内未完成可能因 Token 过期导致失败。建议在上传带宽较好时上传，或先压缩/分卷处理。",
+                file_name
+            ))
+        } else {
+            None
+        };
 
-        Ok(None)
+        FileValidation { blockers, warning }
     }
 
     async fn record_blocked_file(
@@ -234,14 +370,16 @@ impl QueueManager {
         file_path: &str,
         file_name: &str,
         file_size: u64,
-        reason: &str,
+        reasons: &[BlockedReason],
         target_path: &str,
     ) {
         let record = BlockedFileRecord {
             file_path: file_path.to_string(),
             file_name: file_name.to_string(),
             file_size,
-            reason: reason.to_string(),
+            reason: format_blocked_reasons(reasons, file_name),
+            reasons: reasons.to_vec(),
+            is_directory: Path::new(file_path).is_dir(),
             blocked_at: chrono::Utc::now(),
             target_path: target_path.to_string(),
             resolved: false,

@@ -8,7 +8,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { FolderPicker } from './components/FolderPicker';
-import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig, type BlockedFileRecord, type UploadTask, type LocalLogFileInfo, type LogSyncResult } from './types';
+import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig, type BlockedFileRecord, type BlockedReason, type UploadTask, type LocalLogFileInfo, type LogSyncResult } from './types';
 import './App.css';
 
 const FOUR_GB = 4 * 1024 * 1024 * 1024;
@@ -252,7 +252,8 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     setRecordBusy(pathKey, { kind: 'rename', phase: 'running', percent: 0 });
     try {
       await writeClientLog(`开始改名重传: file=${record.file_path}, target=${record.target_path}`);
-      const newPath = record.file_path.endsWith('-dir')
+      const isDirectory = record.is_directory ?? record.file_path.endsWith('-dir');
+      const newPath = isDirectory
         ? await invoke<string>('rename_blocked_folder', { folderPath: record.file_path })
         : await invoke<string>('rename_blocked_file', { filePath: record.file_path });
       await writeClientLog(`改名完成: new_path=${newPath}`);
@@ -1628,8 +1629,18 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 <tbody>
                   {filteredBlockedFiles.map((record) => {
                     const realIndex = blockedFiles.indexOf(record);
-                    const isNameTooLong = record.reason.includes('过长');
-                    const needsSplit = record.file_size > FIVE_GB;
+                    const reasons = record.reasons ?? [];
+                    const hasNameReason = reasons.length > 0
+                      ? reasons.some((reason: BlockedReason) => reason.kind === 'name_too_long')
+                      : record.reason.includes('文件名过长') || record.reason.includes('目录名过长');
+                    const hasSizeReason = reasons.length > 0
+                      ? reasons.some((reason: BlockedReason) => reason.kind === 'file_too_large')
+                      : record.file_size > FIVE_GB;
+                    const hasTargetPathReason = reasons.some((reason: BlockedReason) => reason.kind === 'target_path_too_long')
+                      || (reasons.length === 0 && record.reason.includes('目标目录名过长'));
+                    const isDirectory = record.is_directory ?? record.file_path.endsWith('-dir');
+                    const canSplit = hasSizeReason && !hasTargetPathReason && !isDirectory;
+                    const canRename = (hasNameReason || (isDirectory && hasTargetPathReason)) && !hasSizeReason;
                     return (
                     <Fragment key={realIndex}>
                     <tr className={record.resolved ? 'blocked-row-resolved' : ''}>
@@ -1645,7 +1656,11 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         </button>
                       </td>
                       <td>{formatFileSize(record.file_size)}</td>
-                      <td title={record.reason}>{record.reason}</td>
+                      <td title={record.reason}>
+                        {record.reason.split('\n').map((line, lineIndex) => (
+                          <div key={lineIndex}>{line}</div>
+                        ))}
+                      </td>
                       <td>{new Date(record.blocked_at).toLocaleString()}</td>
                       <td>
                         {record.resolved ? (
@@ -1655,19 +1670,21 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         )}
                       </td>
                       <td>
-                        {!record.resolved && needsSplit && !record.file_path.endsWith('-dir') && (
+                        {!record.resolved && canSplit && (
                           <button
                             onClick={() => handleSplitCompress(record, realIndex)}
                             className="small primary"
                             disabled={!!compressStates[record.file_path]}
-                            title="自动分卷压缩并加入上传队列"
+                            title={hasNameReason
+                              ? '名称和大小均超限，分卷压缩将同时处理两个问题'
+                              : '自动分卷压缩并加入上传队列'}
                           >
                             {compressStates[record.file_path]?.kind === 'compress'
                               ? (compressStates[record.file_path].phase === 'queued' ? '排队中...' : `压缩中 ${compressStates[record.file_path].percent}%`)
                               : '分卷压缩'}
                           </button>
                         )}
-                        {!record.resolved && isNameTooLong && (
+                        {!record.resolved && canRename && (
                           <button
                             onClick={() => handleRenameAndUpload(record, realIndex)}
                             className="small primary"
