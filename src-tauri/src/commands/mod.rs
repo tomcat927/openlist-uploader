@@ -1216,9 +1216,10 @@ pub async fn rename_blocked_folder(
     rename_blocked_folder_inner(&folder_path)
 }
 
-/// 将单个超长名称文件重命名为短名（尽量保留扩展名）；名称已在限制内时原样返回
+/// 将单个超长名称文件放入短名目录，保留原名存根后返回目录路径
 #[tauri::command]
 pub async fn rename_blocked_file(file_path: String) -> Result<String, String> {
+    use std::io::Write;
     use std::path::Path;
 
     let src_path = Path::new(&file_path);
@@ -1234,56 +1235,85 @@ pub async fn rename_blocked_file(file_path: String) -> Result<String, String> {
     let original_bytes = original_name.len();
     let parent_dir = src_path.parent().ok_or("无法获取父目录")?;
 
-    let new_name = truncate_filename_to_bytes(&original_name, NAME_BYTES_LIMIT);
-    if new_name == original_name {
-        log(&format!("文件名已在限制内，无需改名: {} ({} 字节)", file_path, original_bytes));
-        return Ok(file_path);
-    }
-    let new_path = parent_dir.join(&new_name);
+    const DIR_SUFFIX: &str = "-dir";
+    let (stem, extension) = match original_name.rfind('.') {
+        Some(pos) if pos > 0 => (&original_name[..pos], &original_name[pos..]),
+        _ => (original_name.as_str(), ""),
+    };
 
-    // 如果目标已存在，在扩展名前加序号
-    let mut final_path = new_path.clone();
-    let mut counter = 1;
-    while final_path.exists() {
-        let suf_name = match new_name.rfind('.') {
-            Some(pos) => format!("{}-{}{}", &new_name[..pos], counter, &new_name[pos..]),
-            None => format!("{}-{}", new_name, counter),
+    // 同一个基础名同时用于目录和文件，确保两者都不超过 175 字节。
+    let max_base_bytes = NAME_BYTES_LIMIT
+        .saturating_sub(DIR_SUFFIX.len().max(extension.len()));
+    if truncate_to_bytes(stem, max_base_bytes).is_empty() {
+        return Err("文件扩展名过长，无法生成有效的短名称".into());
+    }
+
+    // 如果目标目录已存在，在基础名后加序号，并重新计算截断长度。
+    let mut counter = 0;
+    let (final_dir, final_base) = loop {
+        let counter_suffix = if counter == 0 {
+            String::new()
+        } else {
+            format!("-{}", counter)
         };
-        final_path = parent_dir.join(&suf_name);
+        let candidate_max = max_base_bytes.saturating_sub(counter_suffix.len());
+        let candidate_stem = truncate_to_bytes(stem, candidate_max);
+        if candidate_stem.is_empty() {
+            return Err("无法生成不重复的短名称目录".into());
+        }
+        let candidate_base = format!("{}{}", candidate_stem, counter_suffix);
+        let candidate_dir = parent_dir.join(format!("{}{}", candidate_base, DIR_SUFFIX));
+        if !candidate_dir.exists() {
+            break (candidate_dir, candidate_base);
+        }
         counter += 1;
+    };
+
+    std::fs::create_dir(&final_dir).map_err(|e| format!("创建改名目录失败: {}", e))?;
+
+    let new_name = format!("{}{}", final_base, extension);
+    let moved_path = final_dir.join(&new_name);
+    if let Err(e) = std::fs::rename(src_path, &moved_path) {
+        let _ = std::fs::remove_dir(&final_dir);
+        return Err(format!("移动并重命名文件失败: {}", e));
     }
 
-    std::fs::rename(src_path, &final_path).map_err(|e| format!("重命名文件失败: {}", e))?;
-    let final_name = final_path
+    let stub_path = final_dir.join("原名.txt");
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let stub_content = format!(
+        "原始文件名: {}\n原始字节数: {} 字节\n改名原因: 超过 115Crypt 加密驱动 175 字节限制\n新文件夹名: {}\n新文件名: {}\n改名时间: {}\n源路径: {}",
+        original_name,
+        original_bytes,
+        final_dir.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+        new_name,
+        timestamp,
+        file_path
+    );
+    let write_result = std::fs::File::create(&stub_path)
+        .and_then(|mut file| file.write_all(stub_content.as_bytes()));
+    if let Err(e) = write_result {
+        let rollback_result = std::fs::rename(&moved_path, src_path);
+        let _ = std::fs::remove_file(&stub_path);
+        let _ = std::fs::remove_dir(&final_dir);
+        return match rollback_result {
+            Ok(_) => Err(format!("创建原名存根失败，已还原原文件: {}", e)),
+            Err(rollback_error) => Err(format!(
+                "创建原名存根失败且无法还原原文件: {}; 还原错误: {}",
+                e, rollback_error
+            )),
+        };
+    }
+
+    let final_dir_name = final_dir
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
+        .unwrap_or("");
     log(&format!(
-        "文件已重命名: {} ({} 字节) -> {} ({} 字节)",
-        original_name, original_bytes, final_name, final_name.len()
+        "单文件改名包装完成: {} ({} 字节) -> {}/{}，已创建原名.txt",
+        original_name, original_bytes, final_dir_name, new_name
     ));
 
-    Ok(final_path.to_string_lossy().to_string())
-}
-
-/// 按字节限制截断文件名，尽量保留扩展名（最后一个点之后的部分）
-fn truncate_filename_to_bytes(name: &str, max_bytes: usize) -> String {
-    if name.len() <= max_bytes {
-        return name.to_string();
-    }
-    if let Some(pos) = name.rfind('.') {
-        let (stem, ext) = name.split_at(pos);
-        if ext.len() <= max_bytes {
-            let max_stem = max_bytes - ext.len();
-            let new_stem = truncate_to_bytes(stem, max_stem);
-            let result = format!("{}{}", new_stem, ext);
-            if !new_stem.is_empty() && result.len() <= max_bytes {
-                return result;
-            }
-        }
-    }
-    truncate_to_bytes(name, max_bytes)
+    Ok(final_dir.to_string_lossy().to_string())
 }
 
 /// 从文件名提取 part 后缀（如 "xxx.part1.rar" → "part1.rar"）
