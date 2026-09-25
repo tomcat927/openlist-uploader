@@ -1595,13 +1595,31 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
           <div className="blocked-tab">
             <div className="tab-header">
               <h2>被拦截文件记录</h2>
-              <input
-                type="text"
-                placeholder="搜索文件名或路径..."
-                value={blockedSearchText}
-                onChange={(e) => setBlockedSearchText(e.target.value)}
-                className="history-search-input"
-              />
+              <div className="history-search-wrapper">
+                <input
+                  type="text"
+                  placeholder="搜索文件名或路径..."
+                  value={blockedSearchText}
+                  onChange={(e) => setBlockedSearchText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && blockedSearchText) {
+                      e.preventDefault();
+                      setBlockedSearchText('');
+                    }
+                  }}
+                  className="history-search-input"
+                />
+                {blockedSearchText && (
+                  <button
+                    type="button"
+                    className="history-search-clear"
+                    onClick={() => setBlockedSearchText('')}
+                    title="清空搜索内容"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               <button onClick={clearBlockedFiles} className="danger" disabled={blockedFiles.length === 0}>
                 清空所有记录
               </button>
