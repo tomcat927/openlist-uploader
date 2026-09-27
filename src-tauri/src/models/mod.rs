@@ -262,6 +262,9 @@ pub struct UploadConfig {
     /// 开机自启动（默认关闭）
     #[serde(default)]
     pub auto_start_on_boot: bool,
+    /// 静默启动：启动时不显示主窗口，仅后台运行（默认关闭）
+    #[serde(default)]
+    pub start_silent: bool,
     /// 上传期间定时发送进度通知（默认关闭）
     #[serde(default)]
     pub progress_notify_enabled: bool,
@@ -337,6 +340,7 @@ impl Default for UploadConfig {
             max_tasks_per_run: 0,
             check_update_on_startup: true,
             auto_start_on_boot: false,
+            start_silent: false,
             progress_notify_enabled: false,
             progress_notify_interval: 30,
             refresh_index_after_upload: true,

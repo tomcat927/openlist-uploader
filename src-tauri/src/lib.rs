@@ -138,6 +138,29 @@ pub fn run() {
             append_log("startup.log", "tauri setup begin");
             crate::utils::log::log("tauri setup begin; schedule manager starting");
 
+            // 静默启动判定：配置勾选 start_silent，或以开机自启参数（--autostart）启动时隐藏主窗口
+            // 窗口默认 visible=false（tauri.conf.json），非静默路径在此显式 show
+            {
+                let autostarted = std::env::args().any(|arg| arg == "--autostart");
+                let config_start_silent = {
+                    let qm_for_silent = app.state::<crate::services::queue_manager::QueueManager>();
+                    let config = qm_for_silent.config.blocking_read();
+                    config.upload.start_silent
+                };
+                let silent = config_start_silent || autostarted;
+                append_log("startup.log", &format!("静默启动判定: config_start_silent={}, autostarted={}, silent={}", config_start_silent, autostarted, silent));
+                crate::utils::log::log(&format!("静默启动判定: silent={}", silent));
+                if let Some(window) = app.get_webview_window("main") {
+                    if silent {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+
             // 日志定时同步
             {
                 let qm_for_logsync = qm_for_setup.clone_inner();

@@ -100,6 +100,7 @@ export interface UploadConfig {
   max_tasks_per_run: number;
   check_update_on_startup: boolean;
   auto_start_on_boot: boolean;
+  start_silent: boolean;
   progress_notify_enabled: boolean;
   progress_notify_interval: number;
   refresh_index_after_upload: boolean;
@@ -204,6 +205,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     max_tasks_per_run: 0,
     check_update_on_startup: true,
     auto_start_on_boot: false,
+    start_silent: false,
     progress_notify_enabled: false,
     progress_notify_interval: 30,
     refresh_index_after_upload: true,

@@ -2762,6 +2762,18 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
               <div className="form-group checkbox-group">
                 <input
                   type="checkbox"
+                  id="startSilent"
+                  checked={configForm.upload.start_silent}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, start_silent: e.target.checked }
+                  })}
+                />
+                <label htmlFor="startSilent">静默启动（不显示主窗口，从托盘唤出；开机自启时始终静默）</label>
+              </div>
+              <div className="form-group checkbox-group">
+                <input
+                  type="checkbox"
                   id="progressNotifyEnabled"
                   checked={configForm.upload.progress_notify_enabled}
                   onChange={(e) => setConfigForm({
