@@ -44,6 +44,8 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
   const [createDraft, setCreateDraft] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [recentError, setRecentError] = useState('');
+  const [verifyingRecentPath, setVerifyingRecentPath] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const manualInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +94,7 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
       setShowCreateInput(false);
       setCreateDraft('');
       setCreateError('');
+      setRecentError('');
       loadFolders(startPath);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,7 +130,33 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
 
   const handleNavigateTo = (path: string) => {
     setSearchQuery('');
+    setRecentError('');
     loadFolders(path);
+  };
+
+  // 直接选定跳过了浏览流程，先验证目录仍然存在，避免选中已删除/改名的目录
+  const handleRecentSelect = async (path: string) => {
+    if (verifyingRecentPath) return;
+    setRecentError('');
+    setVerifyingRecentPath(path);
+    try {
+      const config = await invoke<AppConfig>('get_config');
+      if (!config.alist.base_url) {
+        setRecentError('请先在设置中配置 Alist 服务地址');
+        return;
+      }
+      await invoke<string>('alist_list_dir', { config, path });
+      await invoke('write_client_log', { message: `从最近使用直接选定上传目录: path=${path}` });
+      onChange(path);
+      onAddRecentPath(path);
+      setIsOpen(false);
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRecentError(`目录不存在或无法访问：${message}`);
+      await invoke('write_client_log', { message: `最近使用目录验证失败: path=${path}, error=${message}` });
+    } finally {
+      setVerifyingRecentPath(null);
+    }
   };
 
   const handleConfirm = () => {
@@ -383,17 +412,29 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
                 <span className="recent-label">最近使用</span>
                 <div className="recent-list">
                   {recentPaths.map((rp) => (
-                    <button
-                      key={rp}
-                      type="button"
-                      className="recent-item"
-                      onClick={() => handleNavigateTo(rp)}
-                      disabled={isLoading}
-                    >
-                      {rp}
-                    </button>
+                    <div key={rp} className="recent-row">
+                      <button
+                        type="button"
+                        className="recent-item"
+                        onClick={() => handleNavigateTo(rp)}
+                        disabled={isLoading}
+                        title={`浏览 ${rp}`}
+                      >
+                        {rp}
+                      </button>
+                      <button
+                        type="button"
+                        className="small primary recent-select"
+                        onClick={() => handleRecentSelect(rp)}
+                        disabled={isLoading || verifyingRecentPath !== null}
+                        title="验证后直接选定此目录并关闭"
+                      >
+                        {verifyingRecentPath === rp ? '验证中…' : '选定'}
+                      </button>
+                    </div>
                   ))}
                 </div>
+                {recentError && <div className="manual-error">{recentError}</div>}
               </div>
             )}
 
