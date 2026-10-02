@@ -115,8 +115,9 @@ function App() {
   const [queuePageSize] = useState(50);
   const [blockedSearchText, setBlockedSearchText] = useState('');
   const [blockedSortOrder, setBlockedSortOrder] = useState<'desc' | 'asc'>('desc');
-  const [saveConfigStatus, setSaveConfigStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
-  const [saveConfigMessage, setSaveConfigMessage] = useState('');
+  const [autoSaveState, setAutoSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [autoSaveMessage, setAutoSaveMessage] = useState('');
+  const [autoSavedAt, setAutoSavedAt] = useState('');
   const [historyFilter, setHistoryFilter] = useState<'all' | 'completed' | 'failed'>('all');
   const [historySortOrder, setHistorySortOrder] = useState<'desc' | 'asc'>('desc');
   const [historySearchText, setHistorySearchText] = useState('');
@@ -137,8 +138,8 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   const configInitializedRef = useRef(false);
   const startupUpdateCheckedRef = useRef(false);
   const alistPathRef = useRef('/');
-  const savePathTimerRef = useRef<number | null>(null);
-  const speedLimitSaveTimerRef = useRef<number | null>(null);
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const lastSavedFormRef = useRef<string>('');
   const notifiedTaskIds = useRef<Set<string>>(new Set());
   const compressInFlightRef = useRef<Set<string>>(new Set());
 
@@ -452,9 +453,6 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       if (unlistenFn) {
         unlistenFn();
       }
-      if (savePathTimerRef.current) {
-        window.clearTimeout(savePathTimerRef.current);
-      }
       Object.values(historyRetryTimerRef.current).forEach(window.clearTimeout);
     };
  }, [loadQueue, loadHistory, loadConfig, startHealthCheck, stopHealthCheck, addToFileQueue]);
@@ -466,6 +464,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
  useEffect(() => {
     const normalizedConfig = normalizeAppConfig(config);
     setConfigForm(normalizedConfig);
+    lastSavedFormRef.current = JSON.stringify(normalizedConfig);
     // 判断当前上传限速值是否在预设选项中，否则启用自定义模式
     const mb_s = speedLimitToMBs(normalizedConfig.upload.speed_limit);
     const presets = [0, 1, 2, 5, 10];
@@ -635,34 +634,45 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     }
   };
 
- const persistAlistPath = (path: string) => {
+  // 设置页实时自动保存：表单变更后防抖 800ms 持久化；与最近一次已保存内容一致时跳过（含加载/保存后回填）
+  useEffect(() => {
+    if (!configLoaded) return;
+    const serialized = JSON.stringify(normalizeAppConfig(configForm));
+    if (serialized === lastSavedFormRef.current) return;
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = window.setTimeout(async () => {
+      try {
+        setAutoSaveState('saving');
+        await saveConfig(normalizeAppConfig(configForm));
+        lastSavedFormRef.current = JSON.stringify(normalizeAppConfig(configForm));
+        setAutoSavedAt(new Date().toLocaleTimeString());
+        setAutoSaveState('saved');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setAutoSaveMessage(message);
+        setAutoSaveState('error');
+        await writeClientLog(`配置自动保存失败: ${message}`);
+      }
+    }, 800);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [configForm, configLoaded, saveConfig]);
+
+  const persistAlistPath = (path: string) => {
     const normalizedPath = normalizeAlistPath(path);
     setAlistPath(normalizedPath);
     alistPathRef.current = normalizedPath;
     setUploadPathError(isRootAlistPath(normalizedPath) ? getRootPathMessage() : '');
+    // 只更新表单，持久化由设置页实时自动保存完成（避免从 store 旧值合并、覆盖未保存的编辑）
     setConfigForm(current => normalizeAppConfig({
       ...current,
       upload: { ...current.upload, last_alist_path: normalizedPath },
     }));
-
-    if (savePathTimerRef.current) {
-      window.clearTimeout(savePathTimerRef.current);
-    }
-
-    savePathTimerRef.current = window.setTimeout(async () => {
-      const latestConfig = normalizeAppConfig(useAppStore.getState().config);
-      const nextConfig = normalizeAppConfig({
-        ...latestConfig,
-        upload: { ...latestConfig.upload, last_alist_path: alistPathRef.current },
-      });
-      try {
-        await writeClientLog(`保存上传目标目录: target_path=${alistPathRef.current}`);
-        await saveConfig(nextConfig);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await writeClientLog(`保存上传目标目录失败: target_path=${alistPathRef.current}, error=${message}`);
-      }
-    }, 500);
   };
 
   const handleSelectFiles = async () => {
@@ -785,26 +795,6 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       await writeClientLog(`测试连接异常: ${message}`);
       setTimeout(() => setConnectionStatus('idle'), 5000);
     }
-  };
-
-  const handleSaveConfig = async () => {
-    setSaveConfigStatus('saving');
-    setSaveConfigMessage('');
-    try {
-      await saveConfig(normalizeAppConfig(configForm));
-      setSaveConfigStatus('success');
-      setSaveConfigMessage('配置已保存');
-      await writeClientLog('配置保存成功');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setSaveConfigStatus('error');
-      setSaveConfigMessage(message);
-      await writeClientLog(`配置保存失败: ${message}`);
-    }
-    setTimeout(() => {
-      setSaveConfigStatus('idle');
-      setSaveConfigMessage('');
-    }, 3000);
   };
 
   const handleTestNotification = async () => {
@@ -2170,12 +2160,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                       setSpeedLimitCustomMode(false);
                       setSpeedLimitCustomText('');
                       const bytesPerSec = val === 0 ? 0 : Math.round(val * 1000000);
-                      const newConfig = { ...configForm, upload: { ...configForm.upload, speed_limit: bytesPerSec } };
-                      setConfigForm(newConfig);
-                      if (speedLimitSaveTimerRef.current) window.clearTimeout(speedLimitSaveTimerRef.current);
-                      speedLimitSaveTimerRef.current = window.setTimeout(() => {
-                        saveConfig(newConfig);
-                      }, 500);
+                      setConfigForm({ ...configForm, upload: { ...configForm.upload, speed_limit: bytesPerSec } });
                     }}
                   >
                     <option value={0}>不限速</option>
@@ -2196,12 +2181,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         setSpeedLimitCustomText(e.target.value);
                         const v = parseFloat(e.target.value);
                         const bytesPerSec = Number.isFinite(v) && v > 0 ? Math.round(v * 1000000) : 0;
-                        const newConfig = { ...configForm, upload: { ...configForm.upload, speed_limit: bytesPerSec } };
-                        setConfigForm(newConfig);
-                        if (speedLimitSaveTimerRef.current) window.clearTimeout(speedLimitSaveTimerRef.current);
-                        speedLimitSaveTimerRef.current = window.setTimeout(() => {
-                          saveConfig(newConfig);
-                        }, 500);
+                        setConfigForm({ ...configForm, upload: { ...configForm.upload, speed_limit: bytesPerSec } });
                       }}
                     />
                   )}
@@ -2875,16 +2855,13 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
               <button onClick={handleCheckUpdate} className="secondary">
                 检查更新
               </button>
-              <button onClick={handleSaveConfig} className="primary" disabled={saveConfigStatus === 'saving'}>
-                {saveConfigStatus === 'saving' ? '保存中...' : '保存配置'}
-              </button>
-              {saveConfigStatus === 'success' && (
-                <span className="test-result success">{saveConfigMessage}</span>
+              {autoSaveState === 'saving' && <span className="field-hint">保存中…</span>}
+              {autoSaveState === 'saved' && <span className="field-hint">已自动保存 {autoSavedAt}</span>}
+              {autoSaveState === 'error' && (
+                <span className="test-result error">自动保存失败：{autoSaveMessage}（修改任意项后自动重试）</span>
               )}
-             {saveConfigStatus === 'error' && (
-               <span className="test-result error">{saveConfigMessage}</span>
-             )}
-           </div>
+              {autoSaveState === 'idle' && <span className="field-hint">更改将自动保存，无需手动保存</span>}
+            </div>
            <div className="settings-version">
               当前版本：{appVersion}
             </div>
