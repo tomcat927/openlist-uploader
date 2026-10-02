@@ -545,20 +545,33 @@ impl UploadScheduler {
                     continue;
                 }
 
-                // 任务消失且文件不存在：查全部任务列表找失败错误信息
+                // 任务消失且文件不存在：查已完成任务列表找失败错误信息
                 let mut error_detail = format!("Alist 后台上传任务已消失，但目标目录中未找到文件 {}", task.file.name);
+                let mut found_error = false;
                 match alist_client.get_all_upload_tasks().await {
-                    Ok(all_tasks) => {
-                        if let Some(failed_task) = all_tasks.into_iter().find(|t| t.id == alist_task_id) {
+                    Ok(done_tasks) => {
+                        if let Some(failed_task) = done_tasks.into_iter().find(|t| t.id == alist_task_id) {
                             if !failed_task.error.is_empty() {
                                 error_detail = format!("OpenList 后台任务失败: {}", failed_task.error);
                                 task.api_response = Some(format!("{{\"state\":{},\"error\":\"{}\",\"status\":\"{}\"}}", failed_task.state, failed_task.error, failed_task.status));
                                 log(&format!("查到失败任务错误: file={}, alist_task_id={}, error={}", task.file.name, alist_task_id, failed_task.error));
+                                found_error = true;
                             }
                         }
                     }
                     Err(e) => {
-                        log(&format!("查询全部上传任务失败，无法获取错误详情: {}", e));
+                        log(&format!("查询已完成任务列表失败，无法获取错误详情: {}", e));
+                    }
+                }
+                if !found_error {
+                    // 没拿到后台错误原文时，把排查结论记进 api_response，便于前端与日志对照
+                    task.api_response = Some(format!(
+                        "{{\"task_id\":\"{}\",\"query\":\"/api/task/upload/done\",\"result\":\"任务不在已完成列表或 error 为空\"}}",
+                        alist_task_id
+                    ));
+                    // 大文件场景给出可操作提示：115 对大文件/高频转存可能静默拒绝（如 upload reach the limit）
+                    if task.file.size > FOUR_GB {
+                        error_detail.push_str("。文件较大（>4GB），可能是 115 对大文件转存的限制（非会员单文件上限 5GB），建议开启大文件保护并用分卷压缩后重传；实际错误可在 OpenList 网页后台的任务页查看");
                     }
                 }
 

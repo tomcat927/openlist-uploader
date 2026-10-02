@@ -542,10 +542,12 @@ impl AlistClient {
         }
     }
 
-    /// 查询全部上传任务（含已失败），用于任务从 undone 消失后查错误信息
+    /// 查询已完成上传任务（含失败原因），用于任务从 undone 消失后查错误信息。
+    /// 注意：/api/task/upload 在部分 OpenList 版本不存在（请求落到 SPA 路由返回 index.html），
+    /// 必须使用与 undone 同组的 /api/task/upload/done。
     pub async fn get_all_upload_tasks(&self) -> Result<Vec<AlistTaskResp>, AlistError> {
-        let url = format!("{}/api/task/upload", self.base_url.trim_end_matches('/'));
-        log(&format!("查询 Alist 全部上传任务: url={}", url));
+        let url = format!("{}/api/task/upload/done", self.base_url.trim_end_matches('/'));
+        log(&format!("查询 Alist 已完成上传任务: url={}", url));
 
         let response = self.client
             .get(&url)
@@ -555,15 +557,17 @@ impl AlistClient {
 
         let status = response.status();
         let response_text = response.text().await.map_err(|e| {
-            log(&format!("读取 Alist 全部上传任务响应失败: status={}, error={}", status, e));
+            log(&format!("读取 Alist 已完成上传任务响应失败: status={}, error={}", status, e));
             AlistError::Api(format!("读取任务列表响应失败: {}", e))
         })?;
 
-        log(&format!("Alist 全部上传任务响应: status={}, body_length={}", status, response_text.len()));
+        log(&format!("Alist 已完成上传任务响应: status={}, body_length={}", status, response_text.len()));
 
         let resp: AlistResponse<serde_json::Value> = serde_json::from_str(&response_text).map_err(|e| {
-            log(&format!("解析 Alist 全部上传任务响应失败: status={}, error={}, body={}", status, e, response_text));
-            AlistError::Api(format!("解析任务列表响应失败: {}; 原始响应: {}", e, response_text))
+            // 响应异常时只记录前 200 字符，避免把整个 HTML 页面灌进日志
+            let body_head: String = response_text.chars().take(200).collect();
+            log(&format!("解析 Alist 已完成上传任务响应失败: status={}, error={}, body={}", status, e, body_head));
+            AlistError::Api(format!("解析任务列表响应失败: {}; 原始响应: {}", e, body_head))
         })?;
 
         if resp.code == 200 {
@@ -572,13 +576,16 @@ impl AlistClient {
             };
             if data.is_array() {
                 serde_json::from_value(data).map_err(|e| {
+                    log(&format!("解析 Alist 已完成上传任务数组失败: error={}", e));
                     AlistError::Api(format!("解析任务数组失败: {}", e))
                 })
             } else if let Some(tasks) = data.get("tasks") {
                 serde_json::from_value(tasks.clone()).map_err(|e| {
+                    log(&format!("解析 Alist 已完成上传任务 tasks 字段失败: error={}", e));
                     AlistError::Api(format!("解析任务数组失败: {}", e))
                 })
             } else {
+                log(&format!("Alist 已完成上传任务响应 data 格式未知: data={}", data));
                 Ok(Vec::new())
             }
         } else {
