@@ -8,7 +8,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { FolderPicker } from './components/FolderPicker';
-import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig, type BlockedFileRecord, type BlockedReason, type UploadTask, type LocalLogFileInfo, type LogSyncResult } from './types';
+import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig, type BlockedFileRecord, type BlockedReason, type UploadTask, type LocalLogFileInfo, type LogSyncResult, type CleanupRecord } from './types';
 import './App.css';
 
 const FOUR_GB = 4 * 1024 * 1024 * 1024;
@@ -32,6 +32,7 @@ function App() {
     queue,
     history,
     historyPage,
+    cleanupRecords,
     config,
     configLoaded,
     isUploading,
@@ -47,6 +48,10 @@ function App() {
     loadHistory,
     loadHistoryPage,
     clearHistory,
+    loadCleanupList,
+    cleanupItems,
+    dismissCleanupItem,
+    retryMarkCleanupItem,
     loadConfig,
     saveConfig,
     startUpload,
@@ -86,7 +91,7 @@ function App() {
       return next;
     });
   }, []);
-  const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'blocked'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'blocked' | 'cleanup'>('queue');
   const [configForm, setConfigForm] = useState<AppConfig>(DEFAULT_APP_CONFIG);
   const [blockedFiles, setBlockedFiles] = useState<BlockedFileRecord[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -282,6 +287,48 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     setBlockedFiles([]);
   };
 
+  const handleCleanupItems = async (ids: string[]) => {
+    try {
+      const results = await cleanupItems(ids);
+      const failures = results.filter(r => !r.success);
+      if (failures.length > 0) {
+        window.alert(`部分项目清理失败：\n${failures.map(f => f.message).join('\n')}`);
+      }
+      const successCount = results.filter(r => r.success).length;
+      await writeClientLog(`待清理项移入回收站完成: ${successCount}/${ids.length}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`清理失败: ${message}`);
+      await writeClientLog(`待清理项清理失败: ${message}`);
+    }
+  };
+
+  const handleCleanupAll = async () => {
+    if (cleanupRecords.length === 0) return;
+    const totalSize = cleanupRecords.reduce((sum, r) => sum + (r.total_size || 0), 0);
+    const confirmed = await ask(
+      `确定将 ${cleanupRecords.length} 个项目（共 ${formatFileSize(totalSize)}）移入回收站？\n\n` +
+      '项目将移入系统回收站，可在回收站中恢复。\n注意：超过回收站容量的项目将被直接删除，不会进入回收站。',
+      { title: '确认清理', kind: 'warning' }
+    );
+    if (!confirmed) return;
+    await handleCleanupItems(cleanupRecords.map(r => r.id));
+  };
+
+  const handleCleanupOne = async (record: CleanupRecord) => {
+    await handleCleanupItems([record.id]);
+  };
+
+  const handleRetryMarkCleanup = async (record: CleanupRecord) => {
+    try {
+      await retryMarkCleanupItem(record.id);
+      await writeClientLog(`待清理项已加 delete- 前缀: ${record.path}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`标记失败: ${message}`);
+    }
+  };
+
   const speedLimitToMBs = (bytesPerSec: number): number =>
     bytesPerSec === 0
       ? 0
@@ -308,6 +355,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     loadQueue();
     fetchHistoryPage(1, 'all', '', 'desc');
     loadBlockedFiles();
+    loadCleanupList();
     loadConfig();
     invoke<LocalLogFileInfo[]>('get_local_log_files').then(setLocalLogFiles).catch(() => {});
 
@@ -493,6 +541,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       try {
         await loadQueue();
         await fetchHistoryPage(historyCurrentPage, historyFilter, historySearchText, historySortOrder);
+        await loadCleanupList();
         const latestQueue = useAppStore.getState().queue;
         const backendUploading = await invoke<boolean>('get_is_uploading');
        if (!backendUploading) {
@@ -1069,6 +1118,12 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
             onClick={() => { setActiveTab('blocked'); loadBlockedFiles(); }}
           >
             拦截记录 ({blockedFiles.length})
+          </button>
+          <button
+            className={activeTab === 'cleanup' ? 'active' : ''}
+            onClick={() => { setActiveTab('cleanup'); loadCleanupList(); }}
+          >
+            待清理 ({cleanupRecords.length})
           </button>
           <button
             className={activeTab === 'settings' ? 'active' : ''}
@@ -1752,6 +1807,85 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                     </Fragment>
                     );
                   })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'cleanup' && (
+          <div className="cleanup-tab">
+            <div className="tab-header">
+              <h2>已上传待清理</h2>
+              <button onClick={handleCleanupAll} className="danger" disabled={cleanupRecords.length === 0}>
+                全部移入回收站
+              </button>
+            </div>
+            <p className="field-hint">
+              以下文件夹/文件已全部上传成功，本地数据可以删除。移入回收站后可在回收站中恢复；超过回收站容量的项目将被直接删除，不会进入回收站。
+            </p>
+            {cleanupRecords.length === 0 ? (
+              <p>暂无待清理项目（文件夹批次全部上传成功后会出现在这里）</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>文件数</th>
+                    <th>总大小</th>
+                    <th>完成时间</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cleanupRecords.map((record) => (
+                    <tr key={record.id}>
+                      <td title={record.path}>{record.name}</td>
+                      <td>{record.is_directory ? '文件夹' : '文件'}</td>
+                      <td>{record.file_count}</td>
+                      <td>{formatFileSize(record.total_size)}</td>
+                      <td>{new Date(record.completed_at).toLocaleString()}</td>
+                      <td>
+                        {record.marked ? (
+                          <span className="status-badge status-completed">已标记 delete-</span>
+                        ) : (
+                          <span className="status-badge status-pending">未标记</span>
+                        )}
+                      </td>
+                      <td>
+                        {!record.marked && (
+                          <button
+                            onClick={() => handleRetryMarkCleanup(record)}
+                            className="small primary"
+                            title="为该项加 delete- 前缀"
+                          >
+                            标记
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleOpenFileLocation(record.path)}
+                          className="small"
+                        >
+                          打开位置
+                        </button>
+                        <button
+                          onClick={() => handleCleanupOne(record)}
+                          className="small danger"
+                        >
+                          移入回收站
+                        </button>
+                        <button
+                          onClick={() => dismissCleanupItem(record.id)}
+                          className="small"
+                          title="不再显示此项（不影响本地文件）"
+                        >
+                          忽略
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}

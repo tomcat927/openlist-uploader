@@ -437,6 +437,112 @@ pub async fn clear_blocked_files() -> Result<(), String> {
     Ok(())
 }
 
+/// 待清理项单条操作结果
+#[derive(Clone, serde::Serialize)]
+pub struct CleanupItemResult {
+    pub id: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn get_cleanup_list() -> Result<Vec<CleanupRecord>, String> {
+    let data = Storage::load_cleanup_records().map_err(|e| e.to_string())?;
+    Ok(data
+        .records
+        .into_iter()
+        .filter(|r| r.status == CleanupStatus::Pending)
+        .collect())
+}
+
+/// 将待清理项移入系统回收站（可恢复）。单条失败不中断，逐条返回结果。
+#[tauri::command]
+pub async fn cleanup_items(ids: Vec<String>) -> Result<Vec<CleanupItemResult>, String> {
+    let mut data = Storage::load_cleanup_records().map_err(|e| e.to_string())?;
+    let mut results = Vec::new();
+    for id in &ids {
+        let Some(record) = data
+            .records
+            .iter_mut()
+            .find(|r| &r.id == id && r.status == CleanupStatus::Pending)
+        else {
+            continue;
+        };
+        let path = record.path.clone();
+        if !std::path::Path::new(&path).exists() {
+            record.status = CleanupStatus::Cleaned;
+            record.cleaned_at = Some(chrono::Utc::now());
+            log(&format!("待清理项路径已不存在，视为已清理: {}", path));
+            results.push(CleanupItemResult {
+                id: id.clone(),
+                success: true,
+                message: "路径已不存在，视为已清理".to_string(),
+            });
+            continue;
+        }
+        match trash::delete(&path) {
+            Ok(_) => {
+                log(&format!("已移入回收站: {}", path));
+                record.status = CleanupStatus::Cleaned;
+                record.cleaned_at = Some(chrono::Utc::now());
+                results.push(CleanupItemResult {
+                    id: id.clone(),
+                    success: true,
+                    message: String::new(),
+                });
+            }
+            Err(e) => {
+                let msg = format!("移入回收站失败（可能被其他程序占用）: {}", e);
+                log(&format!("{}: {}", msg, path));
+                results.push(CleanupItemResult {
+                    id: id.clone(),
+                    success: false,
+                    message: msg,
+                });
+            }
+        }
+    }
+    Storage::save_cleanup_records(&data).map_err(|e| e.to_string())?;
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn dismiss_cleanup_item(id: String) -> Result<(), String> {
+    let mut data = Storage::load_cleanup_records().map_err(|e| e.to_string())?;
+    if let Some(record) = data.records.iter_mut().find(|r| r.id == id) {
+        record.status = CleanupStatus::Dismissed;
+        log(&format!("已忽略待清理项: {}", record.path));
+    }
+    Storage::save_cleanup_records(&data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 为未标记的待清理项补加 delete- 前缀（批次完成时被占用等导致未标记的场景）
+#[tauri::command]
+pub async fn retry_mark_cleanup_item(id: String) -> Result<String, String> {
+    let mut data = Storage::load_cleanup_records().map_err(|e| e.to_string())?;
+    let mut outcome: Result<String, String> = Err("待清理项不存在或已处理".to_string());
+    if let Some(record) = data
+        .records
+        .iter_mut()
+        .find(|r| r.id == id && r.status == CleanupStatus::Pending)
+    {
+        match crate::utils::fs::mark_uploaded_delete_prefix(&record.path) {
+            Ok(new_path) => {
+                log(&format!("已标记上传完成(可删除): {} -> {}", record.path, new_path));
+                record.path = new_path.clone();
+                record.marked = true;
+                outcome = Ok(new_path);
+            }
+            Err(e) => {
+                outcome = Err(e.to_string());
+            }
+        }
+    }
+    Storage::save_cleanup_records(&data).map_err(|e| e.to_string())?;
+    outcome
+}
+
 #[tauri::command]
 pub async fn alist_list_dir(config: AppConfig, path: String) -> Result<String, String> {
     log(&format!("收到 Alist 目录列表请求: base_url={}, username={}, has_token={}, path={}", config.alist.base_url, config.alist.username, !config.alist.token.is_empty(), path));

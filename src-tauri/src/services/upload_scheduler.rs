@@ -850,33 +850,63 @@ pub struct ScheduleStats {
     pub uploading_count: usize,
 }
 
-/// 上传完成后异步执行本地 delete- 标记改名（不阻塞上传队列）。
-/// 永久性不满足条件（批次未完成、路径超长等）只记录日志；
-/// 瞬时失败（文件夹被资源管理器/杀毒软件占用）延迟重试两次（5s/20s），仍失败则放弃并记录。
+/// 上传完成后异步执行：批次完成判定 → 写入待清理记录 →（按开关）加 delete- 前缀。
+/// rename 开关关闭时只写待清理记录；改名被占用（资源管理器/杀毒软件等）时延迟重试两次（5s/20s），
+/// 仍失败可稍后在待清理列表中手动标记。
 pub fn spawn_mark_uploaded(queue_manager: Arc<QueueManager>, mark: UploadMark, file_path: String) {
     tokio::spawn(async move {
+        let target_path = match &mark {
+            UploadMark::File => file_path.clone(),
+            UploadMark::Folder { path } => path.clone(),
+        };
+
+        // 1. 完成判定：批次未全部成功时跳过（最后一个任务完成时会再次触发）
+        let summary = match queue_manager.check_upload_complete(&file_path, &mark).await {
+            Ok(summary) => summary,
+            Err(MarkError::Skip(reason)) => {
+                log(&format!("delete- 标记跳过: {}，原因: {}", target_path, reason));
+                return;
+            }
+            Err(MarkError::Io(reason)) => {
+                log(&format!("delete- 标记检查异常: {}，原因: {}", target_path, reason));
+                return;
+            }
+        };
+
+        // 2. 批次已完成：写入/刷新待清理记录（与 rename 开关无关）
+        queue_manager.upsert_cleanup_record(&target_path, &mark, &summary).await;
+
+        // 3. rename 开关关闭则只记录、不加前缀
         if !queue_manager.mark_uploaded_enabled().await {
             return;
         }
+
+        // 4. 加 delete- 前缀：瞬时占用延迟重试两次（5s/20s）
         let retry_delays = [5u64, 20u64];
         let mut attempt = 0usize;
         loop {
-            match queue_manager.try_mark_uploaded(&file_path, &mark).await {
+            match queue_manager.mark_uploaded(&target_path).await {
                 Ok(new_path) => {
-                    if new_path == file_path {
-                        log(&format!("已带 delete- 前缀，无需重复标记: {}", file_path));
+                    queue_manager
+                        .update_cleanup_record_marked(&target_path, new_path.clone())
+                        .await;
+                    if new_path == target_path {
+                        log(&format!("已带 delete- 前缀，无需重复标记: {}", target_path));
                     } else {
-                        log(&format!("已标记上传完成(可删除): {} -> {}", file_path, new_path));
+                        log(&format!("已标记上传完成(可删除): {} -> {}", target_path, new_path));
                     }
                     return;
                 }
                 Err(MarkError::Skip(reason)) => {
-                    log(&format!("delete- 标记跳过: {}，原因: {}", file_path, reason));
+                    log(&format!("delete- 标记跳过（可在待清理列表查看）: {}，原因: {}", target_path, reason));
                     return;
                 }
                 Err(MarkError::Io(reason)) => {
                     if attempt >= retry_delays.len() {
-                        log(&format!("delete- 标记失败，已放弃重试: {}，原因: {}", file_path, reason));
+                        log(&format!(
+                            "delete- 标记失败，已放弃重试（可稍后在待清理列表中手动标记）: {}，原因: {}",
+                            target_path, reason
+                        ));
                         return;
                     }
                     log(&format!(
@@ -884,7 +914,7 @@ pub fn spawn_mark_uploaded(queue_manager: Arc<QueueManager>, mark: UploadMark, f
                         retry_delays[attempt],
                         attempt + 1,
                         retry_delays.len(),
-                        file_path,
+                        target_path,
                         reason
                     ));
                     sleep(Duration::from_secs(retry_delays[attempt])).await;

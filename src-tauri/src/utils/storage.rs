@@ -96,6 +96,14 @@ impl Storage {
         Self::write_json("blocked_files.json", data)
     }
 
+    pub fn load_cleanup_records() -> Result<CleanupData, Box<dyn std::error::Error>> {
+        Self::read_json("cleanup.json")
+    }
+
+    pub fn save_cleanup_records(data: &CleanupData) -> Result<(), Box<dyn std::error::Error>> {
+        Self::write_json("cleanup.json", data)
+    }
+
     pub fn get_data_path() -> PathBuf {
         Self::get_data_dir()
     }

@@ -601,3 +601,46 @@ impl Default for HistoryData {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupStatus {
+    Pending,
+    Cleaned,
+    Dismissed,
+}
+
+/// 已上传完成、等待用户清理的本地文件夹/文件记录（cleanup.json）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupRecord {
+    pub id: String,
+    /// 批次来源路径（加 delete- 前缀前），作为去重键
+    pub original_path: String,
+    /// 当前本地路径（改名后为 delete- 路径）
+    pub path: String,
+    pub name: String,
+    pub is_directory: bool,
+    /// 批次文件数（单文件为 1）
+    pub file_count: u32,
+    /// 批次总字节数
+    pub total_size: u64,
+    pub completed_at: DateTime<Utc>,
+    /// 是否已加 delete- 前缀
+    pub marked: bool,
+    pub status: CleanupStatus,
+    #[serde(default)]
+    pub cleaned_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CleanupData {
+    #[serde(default)]
+    pub records: Vec<CleanupRecord>,
+}
+
+/// 批次完成判定通过后的摘要，用于生成待清理记录（仅后端使用，不序列化）
+#[derive(Debug, Clone)]
+pub struct BatchSummary {
+    pub file_count: u32,
+    pub total_size: u64,
+}

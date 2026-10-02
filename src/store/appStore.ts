@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AddToQueueResult, type UploadTask, type AppConfig, type TaskStatus, type HistoryPage } from '../types';
+import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AddToQueueResult, type UploadTask, type AppConfig, type TaskStatus, type HistoryPage, type CleanupRecord, type CleanupItemResult } from '../types';
 
 interface AppState {
   queue: UploadTask[];
   history: UploadTask[];
   historyPage: HistoryPage | null;
+  cleanupRecords: CleanupRecord[];
   config: AppConfig;
   isUploading: boolean;
   isLoading: boolean;
@@ -23,6 +24,10 @@ interface AppState {
   loadHistory: () => Promise<void>;
   loadHistoryPage: (page: number, pageSize: number, statusFilter: string, searchText: string, sortOrder: string) => Promise<void>;
   clearHistory: () => Promise<void>;
+  loadCleanupList: () => Promise<void>;
+  cleanupItems: (ids: string[]) => Promise<CleanupItemResult[]>;
+  dismissCleanupItem: (id: string) => Promise<void>;
+  retryMarkCleanupItem: (id: string) => Promise<string>;
   loadConfig: () => Promise<void>;
   saveConfig: (config: AppConfig) => Promise<void>;
   startUpload: () => Promise<void>;
@@ -44,6 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   queue: [],
   history: [],
   historyPage: null,
+  cleanupRecords: [],
   config: DEFAULT_APP_CONFIG,
   isUploading: false,
   isLoading: true,
@@ -100,6 +106,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearHistory: async () => {
     await invoke('clear_history');
     set({ history: [] });
+  },
+
+  loadCleanupList: async () => {
+    try {
+      const records = await invoke<CleanupRecord[]>('get_cleanup_list');
+      set({ cleanupRecords: records });
+    } catch (error) {
+      console.error('Failed to load cleanup list:', error);
+    }
+  },
+
+  cleanupItems: async (ids) => {
+    const results = await invoke<CleanupItemResult[]>('cleanup_items', { ids });
+    set(state => ({
+      cleanupRecords: state.cleanupRecords.filter(r => !results.some(res => res.id === r.id && res.success))
+    }));
+    return results;
+  },
+
+  dismissCleanupItem: async (id) => {
+    await invoke('dismiss_cleanup_item', { id });
+    set(state => ({
+      cleanupRecords: state.cleanupRecords.filter(r => r.id !== id)
+    }));
+  },
+
+  retryMarkCleanupItem: async (id) => {
+    const newPath = await invoke<string>('retry_mark_cleanup_item', { id });
+    set(state => ({
+      cleanupRecords: state.cleanupRecords.map(r =>
+        r.id === id ? { ...r, path: newPath, marked: true } : r
+      )
+    }));
+    return newPath;
   },
 
   loadConfig: async () => {

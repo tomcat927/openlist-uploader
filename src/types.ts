@@ -10,6 +10,28 @@ export type UploadMark =
   | { kind: 'folder'; path: string }
   | { kind: 'file' };
 
+export type CleanupStatus = 'pending' | 'cleaned' | 'dismissed';
+
+export interface CleanupRecord {
+  id: string;
+  original_path: string;
+  path: string;
+  name: string;
+  is_directory: boolean;
+  file_count: number;
+  total_size: number;
+  completed_at: string;
+  marked: boolean;
+  status: CleanupStatus;
+  cleaned_at?: string | null;
+}
+
+export interface CleanupItemResult {
+  id: string;
+  success: boolean;
+  message: string;
+}
+
 export interface UploadTask {
   id: string;
   file: FileInfo;
