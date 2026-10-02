@@ -283,8 +283,22 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
   };
 
   const clearBlockedFiles = async () => {
+    const confirmed = await ask(
+      `确定清空全部 ${blockedFiles.length} 条拦截记录？\n未处理的拦截项清空后将无法再使用"改名重传/分卷压缩"快捷处理，此操作不可恢复。`,
+      { title: '确认清空', kind: 'warning' }
+    );
+    if (!confirmed) return;
     await invoke('clear_blocked_files');
     setBlockedFiles([]);
+  };
+
+  const handleClearHistory = async () => {
+    const confirmed = await ask(
+      `确定清空全部上传历史记录？\n此操作不可恢复（不影响本地文件与已上传数据）。`,
+      { title: '确认清空', kind: 'warning' }
+    );
+    if (!confirmed) return;
+    await clearHistory();
   };
 
   const handleCleanupItems = async (ids: string[]) => {
@@ -1473,7 +1487,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                   </button>
                 )}
               </div>
-              <button type="button" onClick={clearHistory} disabled={history.length === 0}>
+              <button type="button" onClick={handleClearHistory} disabled={history.length === 0}>
                 清空历史
               </button>
             </div>

@@ -279,6 +279,22 @@ body {
   margin-top: 0.25rem;
 }
 
+/* Tab 工具栏：标题居左，控件靠右；危险按钮（清空等）推到最右，与搜索框的 ✕ 拉开距离防误点 */
+.tab-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tab-header h2 {
+  margin: 0;
+}
+
+.tab-header > button.danger {
+  margin-left: auto;
+}
+
 .history-search-wrapper {
   position: relative;
   display: inline-flex;
