@@ -208,6 +208,10 @@
 5. 可点击「测试启动 Alist」验证路径和启动是否正常
 6. 下次打开软件会自动启动 Alist 并等待就绪后自动登录
 
+## 更多文档
+
+- [设计决策与排查案例](docs/设计决策与排查案例.md)：功能机制速查（delete- 前缀、待清理、历史重试）、同名文件策略选择建议、`upload reach the limit` 完整排查案例、日志排查速查表
+
 ## 技术栈
 
 - **前端**：React 19 + TypeScript + Vite
@@ -219,7 +223,7 @@
 ## 数据存储
 
 - **Windows**：`%APPDATA%\openlist-uploader\`（从旧版 `alist-uploader` 升级时自动迁移数据）
-- 存储文件：`queue.json`（队列）、`history.json`（历史）、`config.json`（配置）、`blocked_files.json`（拦截记录）
+- 存储文件：`queue.json`（队列）、`history.json`（历史）、`config.json`（配置）、`blocked_files.json`（拦截记录）、`cleanup.json`（待清理列表）
 
 ## 开发
 
