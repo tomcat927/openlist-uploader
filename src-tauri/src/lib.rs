@@ -502,6 +502,7 @@ pub fn run() {
 
             append_log("startup.log", "tauri setup complete");
             crate::utils::log::log("tauri setup complete; QueueManager should be managed");
+            crate::utils::log::log_config_snapshot("startup");
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())

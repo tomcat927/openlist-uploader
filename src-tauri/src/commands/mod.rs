@@ -205,6 +205,7 @@ pub async fn save_config(queue_manager: State<'_, QueueManager>, config: AppConf
         e.to_string()
     })?;
     log("配置保存成功");
+    crate::utils::log::log_config_snapshot("config_saved");
     Ok(())
 }
 
