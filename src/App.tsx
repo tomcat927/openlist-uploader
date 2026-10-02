@@ -1439,14 +1439,14 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                   className={historyFilter === 'completed' ? 'active' : ''}
                   onClick={() => { setHistoryFilter('completed'); fetchHistoryPage(1, 'completed', historySearchText, historySortOrder); }}
                 >
-                  成功 ({historyPage ? '↓' : '0'})
+                  成功 ({historyPage?.stats?.completed ?? 0})
                 </button>
                 <button
                   type="button"
                   className={historyFilter === 'failed' ? 'active' : ''}
                   onClick={() => { setHistoryFilter('failed'); fetchHistoryPage(1, 'failed', historySearchText, historySortOrder); }}
                 >
-                  失败 ({historyPage ? '↓' : '0'})
+                  失败 ({historyPage?.stats?.failed ?? 0})
                 </button>
               </div>
               <div className="history-search-wrapper">
