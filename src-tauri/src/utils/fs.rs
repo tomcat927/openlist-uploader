@@ -146,7 +146,7 @@ pub fn mark_uploaded_delete_prefix(path: &str) -> Result<String, MarkError> {
     }
 
     // 目标已存在时加序号（delete-A-1、delete-A-2...），每一档都做路径长度预检
-    let mut candidate = base;
+    let mut candidate = base.clone();
     let mut counter = 1;
     let new_path = loop {
         let candidate_path = parent.join(&candidate);
