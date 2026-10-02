@@ -561,6 +561,7 @@ pub fn run() {
            crate::commands::cleanup_items,
            crate::commands::dismiss_cleanup_item,
            crate::commands::retry_mark_cleanup_item,
+           crate::commands::requeue_failed_history_tasks,
            crate::commands::get_shutdown_state,
            crate::commands::cancel_shutdown,
            crate::commands::open_file_location,

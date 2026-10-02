@@ -52,6 +52,7 @@ function App() {
     cleanupItems,
     dismissCleanupItem,
     retryMarkCleanupItem,
+    requeueFailedTasks,
     loadConfig,
     saveConfig,
     startUpload,
@@ -118,6 +119,17 @@ function App() {
   const [autoSaveState, setAutoSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [autoSaveMessage, setAutoSaveMessage] = useState('');
   const [autoSavedAt, setAutoSavedAt] = useState('');
+
+  // 队列中待处理/上传中任务的路径键集合：用于在历史记录里派生"已在队列"状态，
+  // 无需持久化标记，队列变化即自动反映，重启后依然准确
+  const queuedTaskKeys = useMemo(
+    () => new Set(queue.filter(t => t.status === 'pending' || t.status === 'uploading').map(t => `${t.file.path}|${t.alist_path}`)),
+    [queue]
+  );
+  const isTaskRequeued = useCallback(
+    (task: UploadTask) => task.status === 'failed' && !task.resolved && queuedTaskKeys.has(`${task.file.path}|${task.alist_path}`),
+    [queuedTaskKeys]
+  );
   const [historyFilter, setHistoryFilter] = useState<'all' | 'completed' | 'failed'>('all');
   const [historySortOrder, setHistorySortOrder] = useState<'desc' | 'asc'>('desc');
   const [historySearchText, setHistorySearchText] = useState('');
@@ -737,8 +749,21 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     }
   };
 
-  const handleHistoryRetry = async (task: UploadTask) => {
+  const handleRequeueAllFailed = async () => {
     try {
+      const result = await requeueFailedTasks();
+      const summary = `重新入队 ${result.requeued} 条；已在队列跳过 ${result.skipped_in_queue} 条；本地文件缺失跳过 ${result.skipped_missing} 条`;
+      await writeClientLog(`批量重试历史失败记录: ${summary}`);
+      await loadQueue();
+      window.alert(summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`批量重试失败: ${message}`);
+      await writeClientLog(`批量重试历史失败记录出错: ${message}`);
+    }
+  };
+
+  const handleHistoryRetry = async (task: UploadTask) => {    try {
       await writeClientLog(`历史记录重试: file=${task.file.path}, alist_path=${task.alist_path}`);
       const result = await addToFileQueue(task.file.path, task.alist_path);
       if (result.warnings.length > 0) {
@@ -1477,6 +1502,14 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                   </button>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={handleRequeueAllFailed}
+                disabled={!historyPage?.stats?.failed}
+                title="把本地文件仍存在的失败记录批量重新加入待上传队列（磁盘已接回后使用）"
+              >
+                重试全部失败 ({historyPage?.stats?.failed ?? 0})
+              </button>
               <button type="button" onClick={handleClearHistory} disabled={history.length === 0}>
                 清空历史
               </button>
@@ -1559,6 +1592,11 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                               {task.status === 'completed' ? '成功' : '失败'}
                               {task.error && `: ${task.error}`}
                             </span>
+                            {isTaskRequeued(task) && (
+                              <span className="status-badge status-pending" title="该失败记录已重新加入待上传队列，上传完成后此记录会被自动替换">
+                                已在队列
+                              </span>
+                            )}
                             {task.resolved && (
                               <span className="status-badge status-completed" title="已手动处理（如通过网页等其他方式补传成功）">
                                 已处理
@@ -1573,9 +1611,10 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                                 type="button"
                                 onClick={() => handleHistoryRetry(task)}
                                 className={`small ${historyRetryStatus[task.id] === 'queued' ? 'queued' : ''}`}
-                                disabled={historyRetryStatus[task.id] === 'queued'}
+                                disabled={isTaskRequeued(task) || historyRetryStatus[task.id] === 'queued'}
+                                title={isTaskRequeued(task) ? '已重新加入待上传队列' : undefined}
                               >
-                                {historyRetryStatus[task.id] === 'queued' ? '已加入队列' : '重试'}
+                                {isTaskRequeued(task) ? '已在队列' : historyRetryStatus[task.id] === 'queued' ? '已加入队列' : '重试'}
                               </button>
                             )}
                             {task.status === 'failed' && !task.resolved && (

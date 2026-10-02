@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AddToQueueResult, type UploadTask, type AppConfig, type TaskStatus, type HistoryPage, type CleanupRecord, type CleanupItemResult } from '../types';
+import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AddToQueueResult, type UploadTask, type AppConfig, type TaskStatus, type HistoryPage, type CleanupRecord, type CleanupItemResult, type RequeueFailedResult } from '../types';
 
 interface AppState {
   queue: UploadTask[];
@@ -28,6 +28,7 @@ interface AppState {
   cleanupItems: (ids: string[]) => Promise<CleanupItemResult[]>;
   dismissCleanupItem: (id: string) => Promise<void>;
   retryMarkCleanupItem: (id: string) => Promise<string>;
+  requeueFailedTasks: () => Promise<RequeueFailedResult>;
   loadConfig: () => Promise<void>;
   saveConfig: (config: AppConfig) => Promise<void>;
   startUpload: () => Promise<void>;
@@ -140,6 +141,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       )
     }));
     return newPath;
+  },
+
+  requeueFailedTasks: async () => {
+    const result = await invoke<RequeueFailedResult>('requeue_failed_history_tasks');
+    if (result.requeued > 0) {
+      const queue = await invoke<UploadTask[]>('get_queue');
+      set({ queue });
+    }
+    return result;
   },
 
   loadConfig: async () => {

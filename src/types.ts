@@ -32,6 +32,12 @@ export interface CleanupItemResult {
   message: string;
 }
 
+export interface RequeueFailedResult {
+  requeued: number;
+  skipped_in_queue: number;
+  skipped_missing: number;
+}
+
 export interface UploadTask {
   id: string;
   file: FileInfo;

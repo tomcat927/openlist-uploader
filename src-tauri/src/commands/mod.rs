@@ -187,6 +187,81 @@ pub async fn clear_history(queue_manager: State<'_, QueueManager>) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// 批量重试结果统计
+#[derive(Clone, serde::Serialize)]
+pub struct RequeueFailedResult {
+    pub requeued: u32,
+    pub skipped_in_queue: u32,
+    pub skipped_missing: u32,
+}
+
+/// 把失败的历史记录批量重新加入待上传队列（一键重试）。
+/// 只处理本地文件仍存在的记录；已在队列（排队/上传中）的同路径任务自动跳过；
+/// 历史记录保留不动，等重传任务完成后由同路径去重自然替换。
+#[tauri::command]
+pub async fn requeue_failed_history_tasks(
+    queue_manager: State<'_, QueueManager>,
+) -> Result<RequeueFailedResult, String> {
+    let history = queue_manager.history.read().await;
+    let failed: Vec<UploadTask> = history
+        .records
+        .iter()
+        .filter(|r| r.status == TaskStatus::Failed && !r.resolved)
+        .cloned()
+        .collect();
+    drop(history);
+
+    let mut result = RequeueFailedResult {
+        requeued: 0,
+        skipped_in_queue: 0,
+        skipped_missing: 0,
+    };
+    if failed.is_empty() {
+        return Ok(result);
+    }
+
+    let mut queue = queue_manager.queue.write().await;
+    for record in failed {
+        // 本地文件必须存在（磁盘已接回），否则重入队列只会再次失败
+        if !std::path::Path::new(&record.file.path).exists() {
+            result.skipped_missing += 1;
+            continue;
+        }
+        let in_queue = queue.tasks.iter().any(|t| {
+            (t.status == TaskStatus::Pending || t.status == TaskStatus::Uploading)
+                && t.file.path == record.file.path
+                && t.alist_path == record.alist_path
+        });
+        if in_queue {
+            result.skipped_in_queue += 1;
+            continue;
+        }
+        let mut task = record;
+        task.id = uuid::Uuid::new_v4().to_string();
+        task.status = TaskStatus::Pending;
+        task.progress = 0;
+        task.retry_count = 0;
+        task.error = None;
+        task.api_response = None;
+        task.start_time = None;
+        task.end_time = None;
+        task.duration = None;
+        task.speed = 0;
+        task.updated_at = chrono::Utc::now();
+        queue.tasks.push(task);
+        result.requeued += 1;
+    }
+    if result.requeued > 0 {
+        Storage::save_queue(&*queue).map_err(|e| e.to_string())?;
+    }
+    drop(queue);
+    log(&format!(
+        "批量重试失败记录: 重新入队 {} 条, 已在队列跳过 {} 条, 本地文件缺失跳过 {} 条",
+        result.requeued, result.skipped_in_queue, result.skipped_missing
+    ));
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn get_config() -> Result<AppConfig, String> {
     let config = Storage::load_config().map_err(|e| {
