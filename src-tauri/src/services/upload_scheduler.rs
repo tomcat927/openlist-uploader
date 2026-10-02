@@ -317,6 +317,20 @@ impl UploadScheduler {
 
         // 115 网盘限制由 API 自身判断，不前端拦截（限制规则不明确，直接上传可能成功）
         
+        // 入队时记录的文件大小可能已过期（如文件在入队后仍在下载/写入中持续增长），
+        // 执行前以磁盘实际大小为准，保证 5GB 大文件保护等基于 size 的检查不被过期元数据绕过
+        match tokio::fs::metadata(&task.file.path).await {
+            Ok(meta) => {
+                if meta.len() != task.file.size {
+                    log(&format!("文件大小与入队时不一致，以磁盘实际大小为准: file={}, enqueue_size={}B, disk_size={}B", task.file.name, task.file.size, meta.len()));
+                    task.file.size = meta.len();
+                }
+            }
+            Err(e) => {
+                log(&format!("获取文件实际大小失败，沿用入队时记录的大小: file={}, error={}", task.file.name, e));
+            }
+        }
+
         let config = queue_manager.config.read().await;
         let alist_config = config.alist.clone();
         let upload_config = config.upload.clone();
