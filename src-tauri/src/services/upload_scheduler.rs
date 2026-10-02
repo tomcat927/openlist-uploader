@@ -5,6 +5,7 @@ use crate::models::*;
 use crate::services::alist_client::{AlistClient, AlistError};
 use crate::services::queue_manager::{is_root_alist_path, QueueManager, FOUR_GB, FIVE_GB};
 use crate::services::rate_limiter::RateLimiter;
+use crate::utils::fs::MarkError;
 use crate::utils::log::log;
 
 pub struct UploadScheduler {
@@ -359,6 +360,11 @@ impl UploadScheduler {
                 queue_manager.increment_tasks_uploaded();
                 let _ = queue_manager.add_to_history(task.clone()).await;
                 let _ = queue_manager.remove_completed_from_queue(task.id.clone()).await;
+
+                // 上传完成后按标记执行本地 delete- 改名（异步，不阻塞队列）
+                if let Some(mark) = task.upload_mark.clone() {
+                    spawn_mark_uploaded(Arc::clone(&queue_manager), mark, task.file.path.clone());
+                }
 
                 // 上传成功后刷新目标目录，触发 OpenList 增量索引更新
                 if upload_config.refresh_index_after_upload {
@@ -842,5 +848,50 @@ pub struct ScheduleStats {
     pub uploaded_bytes: u64,
     pub failed_count: u32,
     pub uploading_count: usize,
+}
+
+/// 上传完成后异步执行本地 delete- 标记改名（不阻塞上传队列）。
+/// 永久性不满足条件（批次未完成、路径超长等）只记录日志；
+/// 瞬时失败（文件夹被资源管理器/杀毒软件占用）延迟重试两次（5s/20s），仍失败则放弃并记录。
+pub fn spawn_mark_uploaded(queue_manager: Arc<QueueManager>, mark: UploadMark, file_path: String) {
+    tokio::spawn(async move {
+        if !queue_manager.mark_uploaded_enabled().await {
+            return;
+        }
+        let retry_delays = [5u64, 20u64];
+        let mut attempt = 0usize;
+        loop {
+            match queue_manager.try_mark_uploaded(&file_path, &mark).await {
+                Ok(new_path) => {
+                    if new_path == file_path {
+                        log(&format!("已带 delete- 前缀，无需重复标记: {}", file_path));
+                    } else {
+                        log(&format!("已标记上传完成(可删除): {} -> {}", file_path, new_path));
+                    }
+                    return;
+                }
+                Err(MarkError::Skip(reason)) => {
+                    log(&format!("delete- 标记跳过: {}，原因: {}", file_path, reason));
+                    return;
+                }
+                Err(MarkError::Io(reason)) => {
+                    if attempt >= retry_delays.len() {
+                        log(&format!("delete- 标记失败，已放弃重试: {}，原因: {}", file_path, reason));
+                        return;
+                    }
+                    log(&format!(
+                        "delete- 标记失败，{} 秒后重试({}/{}): {}，原因: {}",
+                        retry_delays[attempt],
+                        attempt + 1,
+                        retry_delays.len(),
+                        file_path,
+                        reason
+                    ));
+                    sleep(Duration::from_secs(retry_delays[attempt])).await;
+                    attempt += 1;
+                }
+            }
+        }
+    });
 }
 

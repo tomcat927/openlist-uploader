@@ -21,6 +21,16 @@ pub struct FileInfo {
     pub relative_path: Option<String>,
 }
 
+/// 上传完成后的本地 delete- 改名标记方式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UploadMark {
+    /// 拖入的是文件夹：该文件夹产生的全部任务完成后，把本地文件夹改名为 delete- 前缀
+    Folder { path: String },
+    /// 拖入的是单个文件：本任务完成后把该文件改名为 delete- 前缀
+    File,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadTask {
     pub id: String,
@@ -47,9 +57,12 @@ pub struct UploadTask {
     /// 上一次轮询的进度百分比（0.0-100.0），仅内存使用，不持久化
     #[serde(skip)]
     pub prev_progress: f64,
-    /// 上一次轮询的时间戳，仅内存使用，不持久化
+    /// 上一次轮询的时间戳（仅内存使用，不持久化）
     #[serde(skip)]
     pub prev_ts: Option<DateTime<Utc>>,
+    /// 上传完成后本地 delete- 改名标记（旧记录无该字段时为 None，不参与标记）
+    #[serde(default)]
+    pub upload_mark: Option<UploadMark>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +103,7 @@ impl UploadTask {
             api_response: None,
             prev_progress: 0.0,
             prev_ts: None,
+            upload_mark: None,
         }
     }
 
@@ -274,6 +288,9 @@ pub struct UploadConfig {
     /// 上传成功后刷新目标目录触发 OpenList 增量索引（默认开启）
     #[serde(default = "default_true")]
     pub refresh_index_after_upload: bool,
+    /// 上传完成后本地文件/文件夹加 delete- 前缀标记可删除（默认开启）
+    #[serde(default = "default_true")]
+    pub mark_uploaded_delete_prefix: bool,
     /// WinRAR (rar.exe) 路径，用于大文件分卷压缩
     #[serde(default = "default_rar_path")]
     pub rar_path: String,
@@ -344,6 +361,7 @@ impl Default for UploadConfig {
             progress_notify_enabled: false,
             progress_notify_interval: 30,
             refresh_index_after_upload: true,
+            mark_uploaded_delete_prefix: true,
             rar_path: default_rar_path(),
             split_volume_mb: default_volume_mb(),
             schedule: Some(ScheduledUpload::default()),

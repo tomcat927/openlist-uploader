@@ -2149,6 +2149,20 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 <label htmlFor="deleteSourceAfterCompress">分卷压缩成功后删除原文件</label>
               </div>
 
+              <div className="checkbox-group">
+                <input
+                  type="checkbox"
+                  id="markUploadedDeletePrefix"
+                  checked={configForm.upload.mark_uploaded_delete_prefix ?? true}
+                  onChange={(e) => setConfigForm({
+                    ...configForm,
+                    upload: { ...configForm.upload, mark_uploaded_delete_prefix: e.target.checked }
+                  })}
+                />
+                <label htmlFor="markUploadedDeletePrefix">上传完成后本地加 delete- 前缀（标记可删除）</label>
+                <span className="field-hint">文件夹批次全部上传成功后将本地文件夹改名为 delete-开头，单文件上传成功后同样改名文件名；文件夹内部文件不改名。路径过长或被占用时跳过并记录日志</span>
+              </div>
+
               <div className="form-group">
                 <label>同名文件策略:</label>
                 <select

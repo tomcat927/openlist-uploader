@@ -81,6 +81,7 @@ fn format_blocked_reasons(reasons: &[BlockedReason], file_name: &str) -> String 
 }
 use chrono::{DateTime, Utc};
 use crate::models::*;
+use crate::utils::fs::MarkError;
 use crate::utils::storage::Storage;
 use crate::utils::log::log;
 
@@ -235,7 +236,8 @@ impl QueueManager {
                     warnings.push(warning);
                 }
 
-                let task = self.add_single_file_to_queue(&file_info, &folder_target).await?;
+                let mut task = self.add_single_file_to_queue(&file_info, &folder_target).await?;
+                task.upload_mark = Some(UploadMark::Folder { path: file_path.clone() });
                 added_tasks.push(task);
             }
         } else {
@@ -285,6 +287,7 @@ impl QueueManager {
             let mut task = UploadTask::new(file_path.clone(), target_root.clone());
             task.file.size = size;
             task.file.name = name;
+            task.upload_mark = Some(UploadMark::File);
             log(&format!("添加单文件任务: file_path={}, file_name={}, size={}B, target_dir={}", file_path, task.file.name, size, target_root));
             
             let mut queue = self.queue.write().await;
@@ -573,6 +576,91 @@ impl QueueManager {
     pub async fn get_shutdown_deadline(&self) -> Option<DateTime<Utc>> {
         let guard = self.shutdown_deadline.read().await;
         *guard
+    }
+
+    /// delete- 标记功能是否开启
+    pub async fn mark_uploaded_enabled(&self) -> bool {
+        self.config.read().await.upload.mark_uploaded_delete_prefix
+    }
+
+    /// 按标记执行本地 delete- 改名。内部完成全部判定（批次完成、无拦截、无同目录任务、路径预检），
+    /// 业务条件不满足返回 MarkError::Skip（重试无意义），改名被占用等瞬时失败由底层返回 MarkError::Io。
+    pub async fn try_mark_uploaded(&self, file_path: &str, mark: &UploadMark) -> Result<String, MarkError> {
+        match mark {
+            UploadMark::File => self.try_mark_file_uploaded(file_path).await,
+            UploadMark::Folder { path } => self.try_mark_folder_uploaded(path).await,
+        }
+    }
+
+    /// 单文件标记：同一文件仍存在排队/上传中的任务（如多目标上传）时跳过，避免改断后续任务
+    async fn try_mark_file_uploaded(&self, file_path: &str) -> Result<String, MarkError> {
+        {
+            let queue = self.queue.read().await;
+            let still_busy = queue.tasks.iter().any(|t| {
+                (t.status == TaskStatus::Pending || t.status == TaskStatus::Uploading)
+                    && t.file.path == file_path
+            });
+            if still_busy {
+                return Err(MarkError::Skip(format!("同一文件仍有待上传任务: {}", file_path)));
+            }
+        }
+        crate::utils::fs::mark_uploaded_delete_prefix(file_path)
+    }
+
+    /// 文件夹批次标记，三条判据全部满足才改名：
+    /// 1) 队列中没有本批次任务；
+    /// 2) 队列中没有路径落在该文件夹下的其他任务（防止改断单独拖入的同目录文件）；
+    /// 3) 历史中本批次记录全部成功（或已手动处理），且该文件夹下没有未处理的拦截记录。
+    async fn try_mark_folder_uploaded(&self, folder_path: &str) -> Result<String, MarkError> {
+        {
+            let queue = self.queue.read().await;
+            let has_group_task = queue.tasks.iter().any(|t| {
+                matches!(&t.upload_mark, Some(UploadMark::Folder { path }) if path == folder_path)
+            });
+            if has_group_task {
+                return Err(MarkError::Skip(format!("文件夹批次仍有任务在队列中: {}", folder_path)));
+            }
+            let has_task_under_folder = queue.tasks.iter().any(|t| {
+                Path::new(&t.file.path).starts_with(folder_path)
+            });
+            if has_task_under_folder {
+                return Err(MarkError::Skip(format!("文件夹下仍有其他待上传任务: {}", folder_path)));
+            }
+        }
+        {
+            let history = self.history.read().await;
+            let mut group_count = 0;
+            for record in &history.records {
+                let is_group = matches!(
+                    &record.upload_mark,
+                    Some(UploadMark::Folder { path }) if path == folder_path
+                );
+                if !is_group {
+                    continue;
+                }
+                group_count += 1;
+                if record.status != TaskStatus::Completed && !record.resolved {
+                    return Err(MarkError::Skip(format!(
+                        "文件夹批次存在未成功的上传记录（{}）: {}",
+                        record.file.name, folder_path
+                    )));
+                }
+            }
+            if group_count == 0 {
+                return Err(MarkError::Skip(format!("文件夹批次没有可确认的上传记录: {}", folder_path)));
+            }
+        }
+        // 拦截记录（文件夹本身或文件夹内文件）未处理完不算完全上传
+        if let Ok(blocked) = Storage::load_blocked_files() {
+            let has_unresolved = blocked.records.iter().any(|r| {
+                !r.resolved
+                    && (r.file_path == folder_path || Path::new(&r.file_path).starts_with(folder_path))
+            });
+            if has_unresolved {
+                return Err(MarkError::Skip(format!("文件夹存在未处理的拦截记录: {}", folder_path)));
+            }
+        }
+        crate::utils::fs::mark_uploaded_delete_prefix(folder_path)
     }
 
     pub async fn mark_queue_failed(

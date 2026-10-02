@@ -6,6 +6,10 @@ export interface FileInfo {
   size: number;
 }
 
+export type UploadMark =
+  | { kind: 'folder'; path: string }
+  | { kind: 'file' };
+
 export interface UploadTask {
   id: string;
   file: FileInfo;
@@ -22,6 +26,7 @@ export interface UploadTask {
   speed: number;
   resolved: boolean;
   api_response?: string | null;
+  upload_mark?: UploadMark | null;
 }
 
 export interface BlockedFileRecord {
@@ -119,6 +124,7 @@ export interface UploadConfig {
   show_progress: boolean;
   block_duplicate_file_upload: boolean;
   delete_source_after_compress: boolean;
+  mark_uploaded_delete_prefix: boolean;
  notify_on_complete: boolean;
  notify_feishu_on_queue_complete: boolean;
  shutdown_after_complete: boolean;
@@ -224,6 +230,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     show_progress: false,
     block_duplicate_file_upload: true,
     delete_source_after_compress: true,
+    mark_uploaded_delete_prefix: true,
    notify_on_complete: false,
    notify_feishu_on_queue_complete: false,
    shutdown_after_complete: false,

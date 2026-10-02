@@ -156,16 +156,26 @@ pub async fn resolve_history_task(
     queue_manager: State<'_, QueueManager>,
     task_id: String,
 ) -> Result<(), String> {
-    let mut history = queue_manager.history.write().await;
-    let record = history
-        .records
-        .iter_mut()
-        .find(|r| r.id == task_id)
-        .ok_or_else(|| format!("历史记录不存在: {}", task_id))?;
-    record.resolved = true;
-    record.updated_at = chrono::Utc::now();
-    crate::utils::storage::Storage::save_history(&*history).map_err(|e| e.to_string())?;
+    let (mark, file_path) = {
+        let mut history = queue_manager.history.write().await;
+        let record = history
+            .records
+            .iter_mut()
+            .find(|r| r.id == task_id)
+            .ok_or_else(|| format!("历史记录不存在: {}", task_id))?;
+        record.resolved = true;
+        record.updated_at = chrono::Utc::now();
+        let mark = record.upload_mark.clone();
+        let file_path = record.file.path.clone();
+        crate::utils::storage::Storage::save_history(&*history).map_err(|e| e.to_string())?;
+        (mark, file_path)
+    };
     log(&format!("历史记录已标记为已处理: task_id={}", task_id));
+
+    // 手动处理完失败记录后文件夹批次可能已齐全，触发一次 delete- 标记检查（异步，不阻塞）
+    if let Some(mark) = mark {
+        crate::services::upload_scheduler::spawn_mark_uploaded(queue_manager.clone_inner(), mark, file_path);
+    }
     Ok(())
 }
 
