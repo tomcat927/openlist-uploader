@@ -236,8 +236,13 @@ impl QueueManager {
                     warnings.push(warning);
                 }
 
-                let mut task = self.add_single_file_to_queue(&file_info, &folder_target).await?;
-                task.upload_mark = Some(UploadMark::Folder { path: file_path.clone() });
+                let task = self
+                    .add_single_file_to_queue(
+                        &file_info,
+                        &folder_target,
+                        Some(UploadMark::Folder { path: file_path.clone() }),
+                    )
+                    .await?;
                 added_tasks.push(task);
             }
         } else {
@@ -394,7 +399,12 @@ impl QueueManager {
         }
     }
     
-    async fn add_single_file_to_queue(&self, file_info: &crate::models::FileInfo, alist_path: &str) -> Result<UploadTask, Box<dyn std::error::Error>> {
+    async fn add_single_file_to_queue(
+        &self,
+        file_info: &crate::models::FileInfo,
+        alist_path: &str,
+        mark: Option<UploadMark>,
+    ) -> Result<UploadTask, Box<dyn std::error::Error>> {
         let target_path = if let Some(ref relative_path) = file_info.relative_path {
             build_target_dir(alist_path, relative_path)
         } else {
@@ -411,13 +421,17 @@ impl QueueManager {
         });
         if already_exists {
             log(&format!("文件已在队列中，跳过: file_path={}, target={}", file_info.path, target_path));
-            return Ok(UploadTask::new(file_info.path.clone(), target_path));
+            let mut dummy = UploadTask::new(file_info.path.clone(), target_path);
+            dummy.upload_mark = mark;
+            return Ok(dummy);
         }
 
         let mut task = UploadTask::new(file_info.path.clone(), target_path.clone());
         task.file.size = file_info.size;
         task.file.name = file_info.name.clone();
         task.file.relative_path = file_info.relative_path.clone();
+        // 必须在 push 进队列之前打标：push 后再补会只改返回副本，队列里持久化的任务没有标记
+        task.upload_mark = mark;
 
         queue.tasks.push(task.clone());
         Storage::save_queue(&*queue)?;
