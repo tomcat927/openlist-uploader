@@ -220,10 +220,10 @@ export function FolderPicker({ value, onChange, recentPaths, onAddRecentPath, di
       setCreateError('文件夹名称不能包含 / \\ 等非法字符');
       return;
     }
-    // 115Crypt 加密驱动限制：目录名称 UTF-8 字节数不超过 175（实测）
+    // 115Crypt 加密驱动限制：目录名称 UTF-8 字节数不超过 175（加密后 base64 ≤ 255，115 mkdir 硬限制）
     const nameBytes = new TextEncoder().encode(name).length;
     if (nameBytes > 175) {
-      setCreateError(`文件夹名称过长，115Crypt 限制 175 字节，当前 ${nameBytes} 字节（${name.length} 个字符）`);
+      setCreateError(`文件夹名称过长，115Crypt 目录名限制 175 字节，当前 ${nameBytes} 字节（${name.length} 个字符）`);
       return;
     }
     setCreating(true);

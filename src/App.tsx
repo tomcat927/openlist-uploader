@@ -1805,7 +1805,7 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                             onClick={() => handleRenameAndUpload(record, realIndex)}
                             className="small primary"
                             disabled={!!compressStates[record.file_path]}
-                            title="自动截断名称至 175 字节内后加入上传队列"
+                            title="自动截断名称至限制内（目录名 175 字节 / 文件名 383 字节）后加入上传队列"
                           >
                             {compressStates[record.file_path]?.kind === 'rename' ? '处理中...' : '改名重传'}
                           </button>

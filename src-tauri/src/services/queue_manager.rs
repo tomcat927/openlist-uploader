@@ -4,18 +4,33 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// 115Crypt 加密驱动限制：单级目录名/文件名 UTF-8 字节数不超过 175
-const NAME_BYTES_LIMIT: usize = 175;
+/// 115Crypt 加密驱动限制（目录名）：AES+base64url 加密后 ≤ 255 字节，
+/// 明文 UTF-8 ≤ 175 字节（176 字节会因 AES 填充跳到 192→base64 256>255 被 115 mkdir 拒绝）
+const DIR_NAME_BYTES_LIMIT: usize = 175;
 
-/// 检查目标路径各级目录名和文件名是否超限，返回首个超限的段名
-fn check_name_bytes_limit(path: &str) -> Option<String> {
+/// 115Crypt 加密驱动限制（文件名）：115 目录列表截断条目名到 512 字符，
+/// 明文 UTF-8 ≤ 383 字节（384 字节加密后 base64 534>512 被截断→Crypt 驱动无法解密→文件不可见）
+const FILE_NAME_BYTES_LIMIT: usize = 383;
+
+/// 检查路径各级目录名是否超限（不含文件名），返回首个超限的段名
+fn check_dir_name_bytes_limit(path: &str) -> Option<String> {
     for segment in path.split('/').filter(|s| !s.is_empty()) {
         let bytes = segment.len();
-        if bytes > NAME_BYTES_LIMIT {
+        if bytes > DIR_NAME_BYTES_LIMIT {
             return Some(segment.to_string());
         }
     }
     None
+}
+
+/// 检查文件名是否超限，返回超限的名称
+fn check_file_name_bytes_limit(file_name: &str) -> Option<String> {
+    let bytes = file_name.len();
+    if bytes > FILE_NAME_BYTES_LIMIT {
+        Some(file_name.to_string())
+    } else {
+        None
+    }
 }
 
 struct FileValidation {
@@ -30,7 +45,7 @@ fn blocked_reason_text(reason: &BlockedReason, file_name: &str) -> String {
             actual_bytes,
             limit_bytes,
         } => format!(
-            "文件名过长，115Crypt 限制 {} 字节，当前 {} 字节: {}",
+            "文件名过长，115Crypt 文件名限制 {} 字节，当前 {} 字节: {}",
             limit_bytes, actual_bytes, segment
         ),
         BlockedReason::TargetPathTooLong {
@@ -38,7 +53,7 @@ fn blocked_reason_text(reason: &BlockedReason, file_name: &str) -> String {
             actual_bytes,
             limit_bytes,
         } => format!(
-            "目标目录名过长，115Crypt 限制 {} 字节，当前 {} 字节: {}",
+            "目标目录名过长，115Crypt 目录名限制 {} 字节，当前 {} 字节: {}",
             limit_bytes, actual_bytes, segment
         ),
         BlockedReason::FileTooLarge {
@@ -185,11 +200,11 @@ impl QueueManager {
             ));
 
             // 校验目标路径各级目录名 UTF-8 字节数是否超限
-            if let Some(over_name) = check_name_bytes_limit(&folder_target) {
+            if let Some(over_name) = check_dir_name_bytes_limit(&folder_target) {
                 let over_bytes = over_name.len();
                 let reasons = vec![BlockedReason::TargetPathTooLong {
                     actual_bytes: over_bytes,
-                    limit_bytes: NAME_BYTES_LIMIT,
+                    limit_bytes: DIR_NAME_BYTES_LIMIT,
                     segment: over_name,
                 }];
                 let msg = format_blocked_reasons(&reasons, &folder_name);
@@ -331,19 +346,19 @@ impl QueueManager {
         drop(config);
 
         let mut blockers = Vec::new();
-        if let Some(over_name) = check_name_bytes_limit(file_name) {
+        if let Some(over_name) = check_file_name_bytes_limit(file_name) {
             blockers.push(BlockedReason::NameTooLong {
                 actual_bytes: over_name.len(),
-                limit_bytes: NAME_BYTES_LIMIT,
+                limit_bytes: FILE_NAME_BYTES_LIMIT,
                 segment: over_name,
             });
         }
 
         if let Some(target_path) = target_path {
-            if let Some(over_name) = check_name_bytes_limit(target_path) {
+            if let Some(over_name) = check_dir_name_bytes_limit(target_path) {
                 blockers.push(BlockedReason::TargetPathTooLong {
                     actual_bytes: over_name.len(),
-                    limit_bytes: NAME_BYTES_LIMIT,
+                    limit_bytes: DIR_NAME_BYTES_LIMIT,
                     segment: over_name,
                 });
             }
