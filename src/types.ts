@@ -67,6 +67,9 @@ export interface BlockedFileRecord {
   blocked_at: string;
   target_path: string;
   resolved: boolean;
+  still_blocked?: boolean;
+  current_reasons?: BlockedReason[];
+  file_exists?: boolean;
 }
 
 export type BlockedReason =

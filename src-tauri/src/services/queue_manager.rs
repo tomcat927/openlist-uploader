@@ -103,6 +103,55 @@ use crate::utils::log::log;
 pub const FOUR_GB: u64 = 4 * 1024 * 1024 * 1024;
 pub const FIVE_GB: u64 = 5 * 1024 * 1024 * 1024;
 
+/// 按当前限制规则重新校验拦截记录。该结果仅用于展示/重新入队判断，不写回历史记录。
+pub fn revalidate_blocked_record(
+    record: &BlockedFileRecord,
+    block_files_over_5gb: bool,
+) -> Vec<BlockedReason> {
+    let mut blockers = Vec::new();
+    let name_bytes = record.file_name.len();
+    let is_directory = record.is_directory || (record.file_size == 0 && record.file_name.ends_with("-dir"));
+
+    if is_directory {
+        if let Some(over_name) = check_dir_name_bytes_limit(&record.target_path) {
+            blockers.push(BlockedReason::TargetPathTooLong {
+                actual_bytes: over_name.len(),
+                limit_bytes: DIR_NAME_BYTES_LIMIT,
+                segment: over_name,
+            });
+        } else if name_bytes > DIR_NAME_BYTES_LIMIT {
+            blockers.push(BlockedReason::TargetPathTooLong {
+                segment: record.file_name.clone(),
+                actual_bytes: name_bytes,
+                limit_bytes: DIR_NAME_BYTES_LIMIT,
+            });
+        }
+    } else {
+        if name_bytes > FILE_NAME_BYTES_LIMIT {
+            blockers.push(BlockedReason::NameTooLong {
+                segment: record.file_name.clone(),
+                actual_bytes: name_bytes,
+                limit_bytes: FILE_NAME_BYTES_LIMIT,
+            });
+        }
+        if let Some(over_name) = check_dir_name_bytes_limit(&record.target_path) {
+            blockers.push(BlockedReason::TargetPathTooLong {
+                actual_bytes: over_name.len(),
+                limit_bytes: DIR_NAME_BYTES_LIMIT,
+                segment: over_name,
+            });
+        }
+        if block_files_over_5gb && record.file_size > FIVE_GB {
+            blockers.push(BlockedReason::FileTooLarge {
+                actual_bytes: record.file_size,
+                limit_bytes: FIVE_GB,
+            });
+        }
+    }
+
+    blockers
+}
+
 pub struct QueueManager {
     pub queue: Arc<RwLock<QueueData>>,
     pub history: Arc<RwLock<HistoryData>>,
@@ -128,9 +177,6 @@ impl QueueManager {
             Storage::save_queue(&queue)?;
         }
 
-        // 按当前限制规则重新校验拦截记录，清理历史误拦截（如文件名限制从 175 放宽到 383）
-        Self::cleanup_stale_blocked_records();
-
         Ok(Self {
             queue: Arc::new(RwLock::new(queue)),
             history: Arc::new(RwLock::new(history)),
@@ -142,52 +188,6 @@ impl QueueManager {
            tasks_failed_in_run: Arc::new(AtomicU32::new(0)),
            shutdown_deadline: Arc::new(RwLock::new(None)),
        })
-    }
-
-    /// 启动时按当前限制规则重新校验拦截记录，自动移除不再构成拦截的误拦截记录。
-    /// 校验从记录本身重新推导（目录/文件名限制、5GB），不信任旧 reason 文本。
-    /// 被移除的记录逐条写日志（含本地路径），便于用户重新拖入上传。
-    fn cleanup_stale_blocked_records() {
-        let mut data = match Storage::load_blocked_files() {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-        if data.records.is_empty() {
-            return;
-        }
-        let before = data.records.len();
-        data.records.retain(|record| {
-            if record.resolved {
-                return true; // 用户已标记处理，仅作历史保留
-            }
-            let name_bytes = record.file_name.len();
-            let is_dir = record.is_directory || record.file_name.ends_with("-dir");
-            let still_blocked = if is_dir {
-                // 目录名限制不变（175 字节）
-                name_bytes > DIR_NAME_BYTES_LIMIT
-            } else {
-                // 文件：文件名超 383 字节或大小超 5GB 仍构成拦截
-                name_bytes > FILE_NAME_BYTES_LIMIT || record.file_size > FIVE_GB
-            };
-            if !still_blocked {
-                log(&format!(
-                    "清理误拦截记录（按当前限制已不构成拦截，可重新拖入上传）: path={}, name={}, name_bytes={}, size={}B",
-                    record.file_path, record.file_name, name_bytes, record.file_size
-                ));
-            }
-            still_blocked
-        });
-        let removed = before - data.records.len();
-        if removed > 0 {
-            log(&format!(
-                "拦截记录清理完成: 移除 {} 条误拦截记录，保留 {} 条",
-                removed,
-                data.records.len()
-            ));
-            if let Err(e) = Storage::save_blocked_files(&data) {
-                log(&format!("保存清理后的拦截记录失败: {}", e));
-            }
-        }
     }
 
     pub async fn add_to_queue(&self, file_path: String, alist_path: String) -> Result<AddToQueueResult, Box<dyn std::error::Error>> {

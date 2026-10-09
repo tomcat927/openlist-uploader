@@ -1,6 +1,6 @@
 use tauri::{State, Emitter};
 use crate::models::*;
-use crate::services::queue_manager::QueueManager;
+use crate::services::queue_manager::{revalidate_blocked_record, QueueManager};
 use crate::services::alist_client::AlistClient;
 use crate::utils::storage::Storage;
 use crate::utils::log::log;
@@ -485,9 +485,90 @@ pub async fn test_notification(config: NotificationConfig) -> Result<(), String>
 }
 
 #[tauri::command]
-pub async fn get_blocked_files() -> Result<Vec<BlockedFileRecord>, String> {
+pub async fn get_blocked_files(
+    queue_manager: State<'_, QueueManager>,
+) -> Result<Vec<BlockedFileView>, String> {
     let data = crate::utils::storage::Storage::load_blocked_files().map_err(|e| e.to_string())?;
-    Ok(data.records)
+    let block_files_over_5gb = queue_manager.config.read().await.upload.block_files_over_5gb;
+    let records = data
+        .records
+        .into_iter()
+        .map(|record| {
+            let current_reasons = revalidate_blocked_record(&record, block_files_over_5gb);
+            let file_exists = std::path::Path::new(&record.file_path).exists();
+            BlockedFileView {
+                still_blocked: !current_reasons.is_empty(),
+                current_reasons,
+                file_exists,
+                record,
+            }
+        })
+        .collect();
+    Ok(records)
+}
+
+#[tauri::command]
+pub async fn requeue_blocked_file(
+    queue_manager: State<'_, QueueManager>,
+    file_path: String,
+    target_path: String,
+    is_directory: bool,
+) -> Result<AddToQueueResult, String> {
+    if target_path.trim().is_empty() {
+        return Err("拦截记录缺少 OpenList 目标路径，无法重新入队".to_string());
+    }
+
+    // 文件夹记录保存的是“目标父目录/文件夹名”，而 add_to_queue 会再次拼接本地文件夹名。
+    let actual_is_directory = is_directory || std::path::Path::new(&file_path).is_dir();
+    let enqueue_target = if actual_is_directory {
+        let trimmed = target_path.trim_end_matches('/');
+        match trimmed.rfind('/') {
+            Some(0) | None => "/".to_string(),
+            Some(pos) => trimmed[..pos].to_string(),
+        }
+    } else {
+        target_path.clone()
+    };
+
+    let result = queue_manager
+        .add_to_queue(file_path.clone(), enqueue_target)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let was_queued_or_duplicate = !result.tasks.is_empty()
+        || result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("已在队列中"));
+    if !was_queued_or_duplicate {
+        let message = if result.warnings.is_empty() {
+            "重新入队未产生新任务".to_string()
+        } else {
+            result.warnings.join("\n")
+        };
+        return Err(message);
+    }
+
+    let mut data = crate::utils::storage::Storage::load_blocked_files().map_err(|e| e.to_string())?;
+    let before = data.records.len();
+    let removed_file_path = file_path.as_str();
+    let removed_target_path = target_path.as_str();
+    data.records.retain(|record| {
+        record.resolved
+            || record.file_path != removed_file_path
+            || record.target_path != removed_target_path
+    });
+    if data.records.len() != before {
+        crate::utils::storage::Storage::save_blocked_files(&data).map_err(|e| e.to_string())?;
+        log(&format!(
+            "误拦截记录已重新入队并移除: path={}, target={}, removed={}",
+            file_path,
+            target_path,
+            before - data.records.len()
+        ));
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]

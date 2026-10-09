@@ -433,6 +433,20 @@ pub struct BlockedFileData {
     pub records: Vec<BlockedFileRecord>,
 }
 
+/// 拦截记录的展示视图：原始记录 + 按当前限制规则/配置实时校验的派生状态。
+/// 派生字段不落盘，每次读取列表时重新计算。
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockedFileView {
+    #[serde(flatten)]
+    pub record: BlockedFileRecord,
+    /// 按当前限制（目录名 175 / 文件名 383 / 5GB 开关）重新校验后，是否仍构成拦截
+    pub still_blocked: bool,
+    /// 重新校验得出的当前拦截原因（旧 reason 文本可能过期，按钮逻辑以此为准）
+    pub current_reasons: Vec<BlockedReason>,
+    /// 本地文件是否仍存在
+    pub file_exists: bool,
+}
+
 impl Default for BlockedFileData {
     fn default() -> Self {
         Self { records: vec![] }

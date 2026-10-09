@@ -8,13 +8,13 @@ import { getVersion } from '@tauri-apps/api/app';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { FolderPicker } from './components/FolderPicker';
-import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AppConfig, type BlockedFileRecord, type BlockedReason, type UploadTask, type LocalLogFileInfo, type LogSyncResult, type CleanupRecord } from './types';
+import { DEFAULT_APP_CONFIG, normalizeAppConfig, type AddToQueueResult, type AppConfig, type BlockedFileRecord, type BlockedReason, type UploadTask, type LocalLogFileInfo, type LogSyncResult, type CleanupRecord } from './types';
 import './App.css';
 
 const FOUR_GB = 4 * 1024 * 1024 * 1024;
 const FIVE_GB = 5 * 1024 * 1024 * 1024;
 
-type CompressOpKind = 'compress' | 'rename';
+type CompressOpKind = 'compress' | 'rename' | 'requeue';
 
 interface CompressState {
   kind: CompressOpKind;
@@ -289,6 +289,37 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
       const message = error instanceof Error ? error.message : String(error);
       window.alert(`改名重传失败: ${message}`);
       await writeClientLog(`改名重传失败: file=${record.file_path}, error=${message}`);
+    } finally {
+      compressInFlightRef.current.delete(pathKey);
+      clearRecordBusy(pathKey);
+    }
+  };
+
+  const isBlockedTaskQueued = (record: BlockedFileRecord) =>
+    queue.some(task => (task.status === 'pending' || task.status === 'uploading') && task.file.path === record.file_path);
+
+  const handleRequeueBlockedFile = async (record: BlockedFileRecord) => {
+    const pathKey = record.file_path;
+    if (compressInFlightRef.current.has(pathKey) || isBlockedTaskQueued(record)) return;
+    compressInFlightRef.current.add(pathKey);
+    setRecordBusy(pathKey, { kind: 'requeue', phase: 'running', percent: 0 });
+    try {
+      await writeClientLog(`开始重新入队误拦截记录: file=${record.file_path}, target=${record.target_path}`);
+      const result = await invoke<AddToQueueResult>('requeue_blocked_file', {
+        filePath: record.file_path,
+        targetPath: record.target_path,
+        isDirectory: record.is_directory ?? (record.file_size === 0 && record.file_name.endsWith('-dir')),
+      });
+      if (result.warnings.length > 0) {
+        window.alert(result.warnings.join('\n'));
+      }
+      await loadQueue();
+      await loadBlockedFiles();
+      await writeClientLog(`误拦截记录重新入队成功: file=${record.file_path}, target=${record.target_path}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`重新入队失败: ${message}`);
+      await writeClientLog(`误拦截记录重新入队失败: file=${record.file_path}, error=${message}`);
     } finally {
       compressInFlightRef.current.delete(pathKey);
       clearRecordBusy(pathKey);
@@ -973,6 +1004,16 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     return `${size.toFixed(2)} ${units[unitIndex]}`;
   };
 
+  const formatBlockedReason = (reason: BlockedReason, fileName: string) => {
+    if (reason.kind === 'name_too_long') {
+      return `文件名过长，115Crypt 文件名限制 ${reason.limit_bytes} 字节，当前 ${reason.actual_bytes} 字节: ${reason.segment}`;
+    }
+    if (reason.kind === 'target_path_too_long') {
+      return `目标目录名过长，115Crypt 目录名限制 ${reason.limit_bytes} 字节，当前 ${reason.actual_bytes} 字节: ${reason.segment}`;
+    }
+    return `文件大小超限，115 网盘非会员单个文件最大支持 ${formatFileSize(reason.limit_bytes)}，当前 ${formatFileSize(reason.actual_bytes)}，${fileName} 已阻止加入上传队列。`;
+  };
+
   const formatDuration = (seconds: number) => {
     if (seconds < 60) return `${seconds}s`;
     const m = Math.floor(seconds / 60);
@@ -1093,6 +1134,14 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
     result.sort((a, b) => Number(a.resolved) - Number(b.resolved));
     return result;
   }, [blockedFiles, blockedSearchText, blockedSortOrder]);
+
+  const blockedStats = useMemo(() => {
+    const unresolved = blockedFiles.filter(record => !record.resolved);
+    const requeueReady = unresolved.filter(record => record.still_blocked === false && record.file_exists !== false).length;
+    const missing = unresolved.filter(record => record.still_blocked === false && record.file_exists === false).length;
+    const stillBlocked = unresolved.filter(record => record.still_blocked !== false).length;
+    return { unresolved: unresolved.length, requeueReady, missing, stillBlocked };
+  }, [blockedFiles]);
 
   const allFilteredSelected = filteredQueue.length > 0 && filteredQueue.every(t => selectedTaskIds.has(t.id));
 
@@ -1693,6 +1742,9 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
           <div className="blocked-tab">
             <div className="tab-header">
               <h2>被拦截文件记录</h2>
+              <span className="field-hint">
+                待处理 {blockedStats.unresolved} 条 · 可重新入队 {blockedStats.requeueReady} 条 · 仍需处理 {blockedStats.stillBlocked} 条{blockedStats.missing > 0 ? ` · 本地缺失 ${blockedStats.missing} 条` : ''}
+              </span>
               <div className="history-search-wrapper">
                 <input
                   type="text"
@@ -1745,18 +1797,28 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                 <tbody>
                   {filteredBlockedFiles.map((record) => {
                     const realIndex = blockedFiles.indexOf(record);
-                    const reasons = record.reasons ?? [];
-                    const hasNameReason = reasons.length > 0
-                      ? reasons.some((reason: BlockedReason) => reason.kind === 'name_too_long')
+                    const savedReasons = record.reasons ?? [];
+                    const liveReasons = record.current_reasons ?? savedReasons;
+                    const actionReasons = record.resolved ? savedReasons : liveReasons;
+                    const reasonText = !record.resolved && record.current_reasons
+                      ? (record.current_reasons.length > 0
+                        ? record.current_reasons.map(reason => formatBlockedReason(reason, record.file_name)).join('\n')
+                        : '按当前限制校验已不再构成拦截，可重新入队')
+                      : record.reason;
+                    const stillBlocked = record.resolved || record.still_blocked !== false;
+                    const alreadyQueued = !record.resolved && isBlockedTaskQueued(record);
+                    const canRequeue = !record.resolved && !stillBlocked && !alreadyQueued;
+                    const hasNameReason = actionReasons.length > 0
+                      ? actionReasons.some((reason: BlockedReason) => reason.kind === 'name_too_long')
                       : record.reason.includes('文件名过长') || record.reason.includes('目录名过长');
-                    const hasSizeReason = reasons.length > 0
-                      ? reasons.some((reason: BlockedReason) => reason.kind === 'file_too_large')
+                    const hasSizeReason = actionReasons.length > 0
+                      ? actionReasons.some((reason: BlockedReason) => reason.kind === 'file_too_large')
                       : record.file_size > FIVE_GB;
-                    const hasTargetPathReason = reasons.some((reason: BlockedReason) => reason.kind === 'target_path_too_long')
-                      || (reasons.length === 0 && record.reason.includes('目标目录名过长'));
-                    const isDirectory = record.is_directory ?? record.file_path.endsWith('-dir');
-                    const canSplit = hasSizeReason && !hasTargetPathReason && !isDirectory;
-                    const canRename = (hasNameReason || (isDirectory && hasTargetPathReason)) && !hasSizeReason;
+                    const hasTargetPathReason = actionReasons.some((reason: BlockedReason) => reason.kind === 'target_path_too_long')
+                      || (actionReasons.length === 0 && record.reason.includes('目标目录名过长'));
+                    const isDirectory = record.is_directory ?? (record.file_size === 0 && record.file_name.endsWith('-dir'));
+                    const canSplit = !canRequeue && hasSizeReason && !hasTargetPathReason && !isDirectory;
+                    const canRename = !canRequeue && (hasNameReason || (isDirectory && hasTargetPathReason)) && !hasSizeReason;
                     return (
                     <Fragment key={realIndex}>
                     <tr className={record.resolved ? 'blocked-row-resolved' : ''}>
@@ -1772,8 +1834,8 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                         </button>
                       </td>
                       <td>{formatFileSize(record.file_size)}</td>
-                      <td title={record.reason}>
-                        {record.reason.split('\n').map((line, lineIndex) => (
+                      <td title={reasonText}>
+                        {reasonText.split('\n').map((line, lineIndex) => (
                           <div key={lineIndex}>{line}</div>
                         ))}
                       </td>
@@ -1781,6 +1843,10 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                       <td>
                         {record.resolved ? (
                           <span className="status-badge status-completed">已处理</span>
+                        ) : alreadyQueued ? (
+                          <span className="status-badge status-completed">已在队列中</span>
+                        ) : canRequeue ? (
+                          <span className="status-badge status-completed">误拦截已解除</span>
                         ) : (
                           <span className="status-badge status-pending">待处理</span>
                         )}
@@ -1808,6 +1874,20 @@ const historyRetryTimerRef = useRef<Record<string, number>>({});
                             title="自动截断名称至限制内（目录名 175 字节 / 文件名 383 字节）后加入上传队列"
                           >
                             {compressStates[record.file_path]?.kind === 'rename' ? '处理中...' : '改名重传'}
+                          </button>
+                        )}
+                        {canRequeue && (
+                          <button
+                            onClick={() => handleRequeueBlockedFile(record)}
+                            className="small primary"
+                            disabled={!!compressStates[record.file_path] || record.file_exists === false || !record.target_path}
+                            title={record.file_exists === false
+                              ? '本地文件不存在，无法重新入队'
+                              : !record.target_path
+                                ? '拦截记录缺少 OpenList 目标路径，无法重新入队'
+                                : '按当前限制已不再构成拦截，直接加入上传队列'}
+                          >
+                            {compressStates[record.file_path]?.kind === 'requeue' ? '入队中...' : '重新入队'}
                           </button>
                         )}
                         {!record.resolved && (
